@@ -259,13 +259,18 @@ class LiveBroker {
                         entryPrice = openValue / size;
                     }
                 }
+                const unrealizedPnl = Number(p.unrealizePnl ?? p.unrealizedPnl ?? p.unrealisedPnl);
+                const liquidatePrice = Number(p.liquidatePrice);
                 return {
                     symbol: p.symbol,
                     side: String(p.side || p.positionSide).toLowerCase(), // 'long' or 'short'
                     entryPrice,
                     totalQuantity: size,
                     remainingQuantity: size,
-                    leverage: Number(p.leverage)
+                    leverage: Number(p.leverage),
+                    unrealizedPnl: Number.isFinite(unrealizedPnl) ? unrealizedPnl : null,
+                    liquidatePrice: Number.isFinite(liquidatePrice) ? liquidatePrice : null,
+                    marginSize: Number(p.isolatedMargin || p.marginSize) || null
                 };
             });
     }

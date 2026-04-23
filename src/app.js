@@ -262,6 +262,9 @@ async function bootstrap() {
     const app = express();
     app.set('trust proxy', 1);
     app.set('db', db);
+    // Disable ETag globally — conditional GETs returning 304 break the Mini App
+    // fetch() flow (fetch treats 304 as non-ok and json parsing fails).
+    app.set('etag', false);
 
     app.use(requestId);
 
@@ -271,17 +274,25 @@ async function bootstrap() {
     // to fall back to a permissive policy suitable for dev.
     const corsAllow = (process.env.MINI_APP_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
     app.use('/api', (req, res, next) => {
+        // Disable ETag/Last-Modified based conditional GETs on the API:
+        // live data (balance, PnL, positions) must never be cached as 304,
+        // because the frontend would fail to read a body from Not Modified.
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+
         const origin = req.headers.origin;
-        if (!origin) return next();
-        const allowed = corsAllow.length === 0 || corsAllow.includes(origin);
-        if (allowed) {
-            res.setHeader('Access-Control-Allow-Origin', origin);
-            res.setHeader('Vary', 'Origin');
-            res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,ngrok-skip-browser-warning');
-            res.setHeader('Access-Control-Max-Age', '600');
+        if (origin) {
+            const allowed = corsAllow.length === 0 || corsAllow.includes(origin);
+            if (allowed) {
+                res.setHeader('Access-Control-Allow-Origin', origin);
+                res.setHeader('Vary', 'Origin');
+                res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+                res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,ngrok-skip-browser-warning');
+                res.setHeader('Access-Control-Max-Age', '600');
+            }
+            if (req.method === 'OPTIONS') return res.sendStatus(allowed ? 204 : 403);
         }
-        if (req.method === 'OPTIONS') return res.sendStatus(allowed ? 204 : 403);
         next();
     });
 

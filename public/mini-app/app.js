@@ -27,6 +27,7 @@
     async function api(method, path, body) {
         const opts = {
             method,
+            cache: 'no-store', // never reuse cached responses — live trading data must be fresh
             headers: {
                 'Authorization': `tma ${initData}`,
                 'Content-Type': 'application/json',
@@ -501,7 +502,9 @@
             var isLong  = p.side === 'long';
             var cls     = isLong ? 'pos-long' : 'pos-short';
             var dir     = isLong ? 'LONG' : 'SHORT';
-            var pnl     = Number(p.realizedPnl || 0);
+            // Prefer unrealized PnL from exchange (live floating) over stored realized PnL.
+            var hasUnreal = p.unrealizedPnl != null && Number.isFinite(Number(p.unrealizedPnl));
+            var pnl     = hasUnreal ? Number(p.unrealizedPnl) : Number(p.realizedPnl || 0);
             var pnlCls  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
             var pnlStr  = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
             var lev     = p.leverage ? p.leverage + '×' : '';
@@ -530,6 +533,8 @@
                     '<div class="pos-datum"><span class="pos-datum-label">Объём</span><span class="pos-datum-val">' + fmt(p.remainingQuantity, 4) + '</span></div>' +
                     (p.stopLoss ? '<div class="pos-datum"><span class="pos-datum-label">Stop Loss' + (p.slMovedToBreakeven ? ' · б/у' : '') + '</span><span class="pos-datum-val val-sl">$' + fmt(p.stopLoss, 4) + '</span></div>' : '') +
                     (p.tp1Price ? '<div class="pos-datum"><span class="pos-datum-label">Take Profit</span><span class="pos-datum-val val-tp">$' + fmt(p.tp1Price, 4) + '</span></div>' : '') +
+                    (p.liquidatePrice ? '<div class="pos-datum"><span class="pos-datum-label">Ликвидация</span><span class="pos-datum-val val-sl">$' + fmt(p.liquidatePrice, 4) + '</span></div>' : '') +
+                    (p.marginSize ? '<div class="pos-datum"><span class="pos-datum-label">Маржа</span><span class="pos-datum-val">$' + fmt(p.marginSize, 2) + '</span></div>' : '') +
                 '</div>' +
                 '</div>';
         }).join('');

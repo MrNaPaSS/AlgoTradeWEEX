@@ -214,24 +214,42 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                 balance = await engine.broker.getAvailableBalanceUsd();
             } catch { /* ignore */ }
 
+            // Fetch live position data from exchange for unrealized PnL / liquidation price.
+            let livePositions = [];
+            try {
+                if (engine.broker.getOpenPositions) {
+                    livePositions = await engine.broker.getOpenPositions();
+                }
+            } catch { /* ignore */ }
+
+            const findLive = (symbol, side) => livePositions.find(lp =>
+                lp.symbol === symbol && String(lp.side).toLowerCase() === String(side).toLowerCase()
+            );
+
             res.json({
                 success: true,
                 balance,
-                positions: positions.map(p => ({
-                    positionId: p.positionId,
-                    symbol: p.symbol,
-                    side: p.side,
-                    entryPrice: p.entryPrice,
-                    remainingQuantity: p.remainingQuantity,
-                    leverage: p.leverage,
-                    stopLoss: p.stopLoss,
-                    tp1Price: p.tp1Price,
-                    tp2Price: p.tp2Price,
-                    tp3Price: p.tp3Price,
-                    realizedPnl: p.realizedPnl,
-                    status: p.status,
-                    slMovedToBreakeven: p.slMovedToBreakeven
-                })),
+                positions: positions.map(p => {
+                    const live = findLive(p.symbol, p.side);
+                    return {
+                        positionId: p.positionId,
+                        symbol: p.symbol,
+                        side: p.side,
+                        entryPrice: p.entryPrice || (live && live.entryPrice) || null,
+                        remainingQuantity: p.remainingQuantity,
+                        leverage: p.leverage || (live && live.leverage) || null,
+                        stopLoss: p.stopLoss,
+                        tp1Price: p.tp1Price,
+                        tp2Price: p.tp2Price,
+                        tp3Price: p.tp3Price,
+                        realizedPnl: p.realizedPnl,
+                        unrealizedPnl: live ? live.unrealizedPnl : null,
+                        liquidatePrice: live ? live.liquidatePrice : null,
+                        marginSize: live ? live.marginSize : null,
+                        status: p.status,
+                        slMovedToBreakeven: p.slMovedToBreakeven
+                    };
+                }),
                 risk: riskSnap,
                 stats: stats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 }
             });
