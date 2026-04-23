@@ -419,7 +419,7 @@
             setEl('stat-winrate', Math.round(s.winRate || 0) + '%');
             var pnlEl = document.getElementById('stat-pnl');
             if (pnlEl) {
-                pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+                pnlEl.textContent = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2);
                 pnlEl.className   = 'stat-val ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
             }
 
@@ -506,7 +506,8 @@
             var hasUnreal = p.unrealizedPnl != null && Number.isFinite(Number(p.unrealizedPnl));
             var pnl     = hasUnreal ? Number(p.unrealizedPnl) : Number(p.realizedPnl || 0);
             var pnlCls  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
-            var pnlStr  = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+            var pnlSign = pnl >= 0 ? '+' : '−'; // always show sign for clarity
+            var pnlStr  = pnlSign + '$' + Math.abs(pnl).toFixed(2);
             var lev     = p.leverage ? p.leverage + '×' : '';
             var sym     = p.symbol.replace('USDT', '');
 
