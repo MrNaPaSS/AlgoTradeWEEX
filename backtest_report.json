@@ -1,0 +1,19 @@
+{
+  "symbol": "SOLUSDT",
+  "tf": "1h",
+  "from": "2026-03-10T00:00:00.000Z",
+  "to": "2026-04-19T20:00:14.487Z",
+  "totalCandles": 981,
+  "totalOpens": 28,
+  "totalCloses": 34,
+  "wins": 24,
+  "losses": 10,
+  "winRate": "70.6%",
+  "totalPnL": "$1775",
+  "finalBalance": "$21688.82",
+  "returnPct": "8.44%",
+  "slAtr": 5,
+  "tp1Atr": 2,
+  "tp2Atr": 3,
+  "tp3Atr": 6
+}

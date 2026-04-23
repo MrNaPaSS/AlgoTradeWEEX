@@ -1,0 +1,6 @@
+version: "2"
+authtoken: 35zOOIacIPVkjda234tJraSglcM_4S1cJ1nCfLojpgsXvBc6r
+tunnels:
+  algotrade:
+    proto: http
+    addr: 3000

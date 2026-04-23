@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AlgoTrade Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+
+<!-- Toast container -->
+<div id="toast-container" role="status" aria-live="polite"></div>
+
+<!-- ══════════════════════════════════
+     BOTTOM NAV
+══════════════════════════════════ -->
+<nav class="bottom-nav" role="navigation" aria-label="Основная навигация">
+    <button class="nav-btn" data-screen="dashboard" onclick="App.show('dashboard')" aria-label="Дашборд">
+        <span class="nav-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="12" width="4" height="9" rx="1.5"/>
+                <rect x="10" y="7" width="4" height="14" rx="1.5"/>
+                <rect x="17" y="3" width="4" height="18" rx="1.5"/>
+            </svg>
+        </span>
+        <span class="nav-label">Дашборд</span>
+    </button>
+    <button class="nav-btn" data-screen="settings" onclick="App.show('settings')" aria-label="Риск">
+        <span class="nav-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+                <line x1="4" y1="6" x2="20" y2="6"/>
+                <line x1="4" y1="12" x2="20" y2="12"/>
+                <line x1="4" y1="18" x2="20" y2="18"/>
+                <circle cx="9" cy="6" r="2.5" fill="currentColor" stroke="none"/>
+                <circle cx="15" cy="12" r="2.5" fill="currentColor" stroke="none"/>
+                <circle cx="11" cy="18" r="2.5" fill="currentColor" stroke="none"/>
+            </svg>
+        </span>
+        <span class="nav-label">Риск</span>
+    </button>
+    <button class="nav-btn" data-screen="onboarding" onclick="App.show('onboarding')" aria-label="API Ключи">
+        <span class="nav-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="7.5" cy="15.5" r="4.5"/>
+                <path d="M21 2.5L10.5 13"/>
+                <path d="M15 8l2 2"/>
+                <path d="M18 5l2 2"/>
+            </svg>
+        </span>
+        <span class="nav-label">API</span>
+    </button>
+</nav>
+
+<!-- ══════════════════════════════════
+     SCREEN: ONBOARDING
+══════════════════════════════════ -->
+<section id="screen-onboarding" class="screen hidden" aria-label="Подключение API">
+    <header class="screen-header">
+        <p class="screen-eyebrow">WEEX Futures</p>
+        <h1 class="screen-title">Подключение</h1>
+        <p class="screen-sub">Введите API ключи для активации торгового движка</p>
+    </header>
+
+    <form id="form-register" class="glass-card" autocomplete="off" novalidate>
+        <div class="form-field">
+            <label class="form-label" for="inp-apikey">API Key</label>
+            <div class="input-group">
+                <input id="inp-apikey" class="form-input" type="password"
+                       placeholder="Вставьте API Key" autocomplete="off" spellcheck="false">
+                <button type="button" class="eye-btn" onclick="App.toggleEye(this,'inp-apikey')" aria-label="Показать / скрыть">
+                    <!-- open eye: show when field is password (click to reveal) -->
+                    <svg class="eye-icon eye-open" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <!-- slashed eye: show when field is text (click to hide) -->
+                    <svg class="eye-icon eye-closed hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="form-field">
+            <label class="form-label" for="inp-secret">Secret Key</label>
+            <div class="input-group">
+                <input id="inp-secret" class="form-input" type="password"
+                       placeholder="Вставьте Secret Key" autocomplete="off" spellcheck="false">
+                <button type="button" class="eye-btn" onclick="App.toggleEye(this,'inp-secret')" aria-label="Показать / скрыть">
+                    <svg class="eye-icon eye-open" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <svg class="eye-icon eye-closed hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="form-field">
+            <label class="form-label" for="inp-pass">Passphrase</label>
+            <div class="input-group">
+                <input id="inp-pass" class="form-input" type="password"
+                       placeholder="Вставьте Passphrase" autocomplete="off" spellcheck="false">
+                <button type="button" class="eye-btn" onclick="App.toggleEye(this,'inp-pass')" aria-label="Показать / скрыть">
+                    <svg class="eye-icon eye-open" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <svg class="eye-icon eye-closed hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <button type="submit" class="btn-primary" id="btn-register">
+            <span class="btn-text">Подключить аккаунт</span>
+            <span class="btn-arrow" id="register-arrow">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+            </span>
+            <span class="btn-spinner hidden" id="register-spinner">
+                <svg class="spin" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="9" stroke="rgba(0,0,0,0.25)" stroke-width="2.5"/>
+                    <path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                </svg>
+            </span>
+        </button>
+    </form>
+
+    <div class="info-card">
+        <div class="info-row">
+            <span class="info-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <polyline points="9 12 11 14 15 10"/>
+                </svg>
+            </span>
+            <span>Ключи шифруются <strong>AES-256-GCM</strong> и хранятся только на сервере</span>
+        </div>
+        <div class="info-row">
+            <span class="info-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+            </span>
+            <span>Права: <strong>Futures Trade</strong>. IP-привязка не обязательна</span>
+        </div>
+    </div>
+</section>
+
+<!-- ══════════════════════════════════
+     SCREEN: RISK SETTINGS
+══════════════════════════════════ -->
+<section id="screen-settings" class="screen hidden" aria-label="Параметры риска">
+    <header class="screen-header">
+        <p class="screen-eyebrow">Управление</p>
+        <h1 class="screen-title">Параметры риска</h1>
+    </header>
+
+    <div class="glass-card">
+        <div class="slider-item">
+            <div class="slider-meta">
+                <span class="slider-label">Макс. дневной убыток</span>
+                <span class="value-chip" id="val-loss">3%</span>
+            </div>
+            <input type="range" id="sl-loss" class="range-slider" min="1" max="20" value="3" step="1">
+        </div>
+
+        <div class="card-divider"></div>
+
+        <div class="slider-item">
+            <div class="slider-meta">
+                <span class="slider-label">Макс. позиций одновременно</span>
+                <span class="value-chip" id="val-pos">3</span>
+            </div>
+            <input type="range" id="sl-pos" class="range-slider" min="1" max="10" value="3" step="1">
+        </div>
+
+        <div class="card-divider"></div>
+
+        <div class="slider-item">
+            <div class="slider-meta">
+                <span class="slider-label">Кредитное плечо</span>
+                <span class="value-chip" id="val-lev">5×</span>
+            </div>
+            <input type="range" id="sl-lev" class="range-slider" min="1" max="50" value="5" step="1">
+        </div>
+
+        <div class="card-divider"></div>
+
+        <div class="slider-item">
+            <div class="slider-meta">
+                <span class="slider-label">Размер позиции от баланса</span>
+                <span class="value-chip" id="val-size">5%</span>
+            </div>
+            <input type="range" id="sl-size" class="range-slider" min="1" max="20" value="5" step="1">
+        </div>
+    </div>
+
+    <div class="glass-card">
+        <p class="section-label">Торгуемые инструменты</p>
+
+        <div class="symbols-grid" id="symbols-grid">
+            <label class="symbol-chip">
+                <input type="checkbox" value="BTCUSDT" checked>
+                <div class="chip-face">
+                    <span class="chip-ticker">BTC</span>
+                    <span class="chip-check">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 6 5 9 10 3"/></svg>
+                    </span>
+                </div>
+            </label>
+            <label class="symbol-chip">
+                <input type="checkbox" value="ETHUSDT" checked>
+                <div class="chip-face">
+                    <span class="chip-ticker">ETH</span>
+                    <span class="chip-check">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 6 5 9 10 3"/></svg>
+                    </span>
+                </div>
+            </label>
+            <label class="symbol-chip">
+                <input type="checkbox" value="SOLUSDT">
+                <div class="chip-face">
+                    <span class="chip-ticker">SOL</span>
+                    <span class="chip-check">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 6 5 9 10 3"/></svg>
+                    </span>
+                </div>
+            </label>
+            <label class="symbol-chip">
+                <input type="checkbox" value="BNBUSDT">
+                <div class="chip-face">
+                    <span class="chip-ticker">BNB</span>
+                    <span class="chip-check">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 6 5 9 10 3"/></svg>
+                    </span>
+                </div>
+            </label>
+            <label class="symbol-chip">
+                <input type="checkbox" value="XRPUSDT">
+                <div class="chip-face">
+                    <span class="chip-ticker">XRP</span>
+                    <span class="chip-check">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 6 5 9 10 3"/></svg>
+                    </span>
+                </div>
+            </label>
+            <label class="symbol-chip">
+                <input type="checkbox" value="ADAUSDT">
+                <div class="chip-face">
+                    <span class="chip-ticker">ADA</span>
+                    <span class="chip-check">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 6 5 9 10 3"/></svg>
+                    </span>
+                </div>
+            </label>
+            <label class="symbol-chip">
+                <input type="checkbox" value="XAUTUSDT">
+                <div class="chip-face">
+                    <span class="chip-ticker">XAUT</span>
+                    <span class="chip-check">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 6 5 9 10 3"/></svg>
+                    </span>
+                </div>
+            </label>
+        </div>
+
+        <button class="btn-primary" id="btn-save-settings">
+            <span class="btn-text">Сохранить настройки</span>
+            <span class="btn-arrow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
+            </span>
+        </button>
+    </div>
+
+    <div class="danger-zone">
+        <button class="btn-ghost-danger" id="btn-delete-account">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                <path d="M10 11v6M14 11v6"/>
+                <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+            </svg>
+            Отключить аккаунт
+        </button>
+    </div>
+</section>
+
+<!-- ══════════════════════════════════
+     SCREEN: DASHBOARD
+══════════════════════════════════ -->
+<section id="screen-dashboard" class="screen hidden" aria-label="Торговый дашборд">
+
+    <!-- Balance hero -->
+    <div class="balance-hero">
+        <div class="hero-glow"></div>
+        <div class="hero-body">
+            <div class="hero-left">
+                <p class="balance-label">Доступный баланс</p>
+                <div class="balance-line">
+                    <span class="balance-amount" id="balance-value">
+                        <span class="skel-line" style="width:110px;height:34px;border-radius:8px"></span>
+                    </span>
+                    <span class="balance-currency">USDT</span>
+                </div>
+            </div>
+            <div id="trading-status-badge" class="status-badge badge-active">
+                <span class="badge-dot"></span>
+                <span id="badge-label">Активен</span>
+            </div>
+        </div>
+        <div class="hero-sparkline">
+            <svg id="sparkline-svg" width="100%" height="40" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </div>
+    </div>
+
+    <!-- Stats bento -->
+    <div class="stats-bento">
+        <div class="stat-tile">
+            <span class="stat-label">Всего сделок</span>
+            <span class="stat-val" id="stat-trades">
+                <span class="skel-line" style="width:36px;height:22px;border-radius:6px"></span>
+            </span>
+        </div>
+        <div class="stat-tile">
+            <span class="stat-label">Винрейт</span>
+            <span class="stat-val" id="stat-winrate">
+                <span class="skel-line" style="width:44px;height:22px;border-radius:6px"></span>
+            </span>
+        </div>
+        <div class="stat-tile">
+            <span class="stat-label">P&amp;L сегодня</span>
+            <span class="stat-val" id="stat-pnl">
+                <span class="skel-line" style="width:56px;height:22px;border-radius:6px"></span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Positions header -->
+    <div class="list-header">
+        <span class="list-title">
+            Позиции
+            <span class="refresh-dot" id="refresh-dot"></span>
+        </span>
+        <span class="list-badge" id="pos-count">0</span>
+    </div>
+
+    <!-- Positions list -->
+    <div id="positions-list" role="list">
+        <!-- Initial skeleton -->
+        <div class="skel-card"></div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls-row">
+        <button class="btn-ctrl-outline" id="btn-pause-resume">
+            <svg class="ctrl-svg" id="icon-pause" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="4" width="4" height="16" rx="1"/>
+                <rect x="14" y="4" width="4" height="16" rx="1"/>
+            </svg>
+            <svg class="ctrl-svg hidden" id="icon-play" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            <span id="pause-label">Пауза</span>
+        </button>
+        <button class="btn-ctrl-danger" id="btn-close-all">
+            <svg class="ctrl-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span id="close-all-label">Закрыть всё</span>
+        </button>
+    </div>
+
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

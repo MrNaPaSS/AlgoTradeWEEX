@@ -1,0 +1,9 @@
+process.env.NODE_ENV = 'test';
+process.env.TRADING_MODE = 'paper';
+process.env.LOG_LEVEL = 'error';
+process.env.WEBHOOK_SECRET = 'test_secret_at_least_8_chars';
+process.env.WEBHOOK_HMAC_SECRET = 'test_hmac_secret';
+process.env.SYMBOLS = 'BTCUSDT,ETHUSDT,XAUTUSDT';
+process.env.TIMEFRAMES = '10m,1h,1D';
+process.env.PAPER_STARTING_BALANCE = '10000';
+process.env.ARBITER_MODE = 'FAST';

@@ -1,0 +1,62 @@
+groups:
+  - name: algotrade_alerts
+    rules:
+      # 1. High order failure rate
+      - alert: HighOrderFailureRate
+        expr: rate(algotrade_orders_failed_total[5m]) * 60 > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High order failure rate on {{ $labels.symbol }}"
+          description: "Order failure rate is {{ $value }} per minute (threshold 0.1/min)."
+
+      # 2. Critical LLM errors (non-transient)
+      - alert: CriticalLLMError
+        expr: algotrade_llm_errors_total{transient="false"} > 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical LLM Error detected"
+          description: "A non-transient LLM error has occurred, indicating potential configuration or API issues."
+
+      # 3. WEEX WebSocket disconnected
+      - alert: WeexWsDisconnected
+        expr: algotrade_weex_ws_connected == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "WEEX WebSocket Disconnected"
+          description: "The connection to WEEX WebSocket has been down for more than 30 seconds."
+
+      # 4. Trading Paused by RiskGuard
+      - alert: TradingPausedByRisk
+        expr: increase(algotrade_risk_pauses_total[1h]) > 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trading Paused by RiskGuard"
+          description: "RiskGuard has paused trading in the last hour due to limits being hit."
+
+      # 5. Excessive WebSocket Reconnects
+      - alert: ExcessiveWsReconnects
+        expr: rate(algotrade_weex_ws_reconnects_total[5m]) * 60 > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Excessive WebSocket Reconnects"
+          description: "WebSocket is reconnecting more than once per minute ({{ $value }} per min)."
+
+      # 6. Service Down
+      - alert: AlgoTradeServiceDown
+        expr: up{job="algotrade"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AlgoTrade Service Down"
+          description: "The AlgoTrade service exporter is unreachable."
