@@ -24,6 +24,9 @@ const { WeexFuturesClient } = require('../src/api/weex/WeexFuturesClient');
 const { decrypt } = require('../src/utils/crypto');
 
 const DRY = process.argv.includes('--dry-run');
+// By default we subtract commission from realizedPnl (safe on exchanges that
+// report gross pnl). Pass --gross if WEEX already nets out the closing fee.
+const GROSS = process.argv.includes('--gross');
 const userIdArg = (process.argv.find(a => a.startsWith('--user-id=')) || '').split('=')[1];
 
 (async () => {
@@ -108,10 +111,10 @@ const userIdArg = (process.argv.find(a => a.startsWith('--user-id=')) || '').spl
             commission += Number(f.commission || 0);
             qtySum += Number(f.qty || 0);
         }
-        // realizedPnl from exchange is already net of its own fee reporting in most WEEX
-        // variants; commission field is paid separately. We follow the conservative approach:
-        //   net = realizedPnl − commission
-        const netPnl = Number((pnl - commission).toFixed(6));
+        // --gross flag: assume realizedPnl already accounts for the closing fee
+        // (matches the number WEEX shows in the web UI's "closed positions" tab).
+        // Default: subtract commission explicitly (conservative).
+        const netPnl = Number((GROSS ? pnl : pnl - commission).toFixed(6));
 
         console.log(`  ${p.position_id} ${p.symbol} ${p.side} qty=${p.total_quantity} -> ` +
                     `${closeFills.length} fills, qtySum=${qtySum.toFixed(4)}, ` +
