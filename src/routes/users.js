@@ -207,7 +207,9 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
 
             const positions = engine.positionManager.getOpen();
             const riskSnap = engine.riskGuard.snapshot();
-            const stats = await db.getDailyStats(userId);
+            // Include orphaned (pre-multi-user) trades so the Mini App shows
+            // the same numbers as the bot's /stats command for the single-user case.
+            const stats = await db.getDailyStats(userId, { includeOrphaned: true });
 
             let balance = null;
             try {

@@ -378,7 +378,7 @@ class Database {
         );
     }
 
-    async getDailyStats(userId) {
+    async getDailyStats(userId, { includeOrphaned = false } = {}) {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
         const startTs = todayStart.getTime();
@@ -393,7 +393,13 @@ class Database {
             WHERE status = 'CLOSED' AND closed_at >= ?`;
         const params = [startTs];
         if (userId) {
-            sql += ` AND user_id = ?`;
+            // Optionally include "orphaned" legacy trades (no user_id) — these
+            // were closed by the single-user orchestrator before multi-user mode.
+            if (includeOrphaned) {
+                sql += ` AND (user_id = ? OR user_id IS NULL)`;
+            } else {
+                sql += ` AND user_id = ?`;
+            }
             params.push(userId);
         }
 
