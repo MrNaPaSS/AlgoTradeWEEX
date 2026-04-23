@@ -218,6 +218,19 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                 db.getAllTimeStats(userId, { includeOrphaned: true })
             ]);
 
+            // Diagnostic: dump per-period aggregates so we can see on the VPS
+            // exactly what SQL returned for each window.
+            logger.info('[users] /me/status stats dump', {
+                userId,
+                now,
+                sevenDaysAgo:  now - 7 * DAY,
+                thirtyDaysAgo: now - 30 * DAY,
+                today:    stats,
+                week:     stats7d,
+                month:    stats30d,
+                allTime:  allTimeStats
+            });
+
             let balance = null;
             try {
                 balance = await engine.broker.getAvailableBalanceUsd();
