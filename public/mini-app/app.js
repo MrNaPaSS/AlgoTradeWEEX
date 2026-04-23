@@ -659,8 +659,12 @@
             haptic('light');
             if (name === 'settings') loadSettings();
             // When navigating to the API/onboarding screen, make sure it reflects
-            // the current connection state (form vs. connected card).
-            if (name === 'onboarding') renderOnboardingState(_hasKeys, _lastProfile);
+            // the current connection state (form vs. connected card) and force a
+            // refresh so balance/positions numbers are fresh.
+            if (name === 'onboarding') {
+                renderOnboardingState(_hasKeys, _lastProfile);
+                if (_hasKeys) refresh();
+            }
             showScreen(name);
         },
         toggleEye: toggleEye

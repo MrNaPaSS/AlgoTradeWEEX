@@ -248,14 +248,26 @@ class LiveBroker {
         
         return list
             .filter(p => Number(p.size || p.total) > 0)
-            .map(p => ({
-                symbol: p.symbol,
-                side: String(p.side || p.positionSide).toLowerCase(), // 'long' or 'short'
-                entryPrice: Number(p.entryPrice),
-                totalQuantity: Number(p.size || p.total),
-                remainingQuantity: Number(p.size || p.total),
-                leverage: Number(p.leverage)
-            }));
+            .map(p => {
+                const size = Number(p.size || p.total);
+                // WEEX does not return entryPrice directly — derive from openValue / size.
+                // Fall back to explicit fields if a future API version provides them.
+                let entryPrice = Number(p.entryPrice || p.avgPrice || p.openPrice);
+                if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+                    const openValue = Number(p.openValue || p.cumOpenValue);
+                    if (Number.isFinite(openValue) && size > 0) {
+                        entryPrice = openValue / size;
+                    }
+                }
+                return {
+                    symbol: p.symbol,
+                    side: String(p.side || p.positionSide).toLowerCase(), // 'long' or 'short'
+                    entryPrice,
+                    totalQuantity: size,
+                    remainingQuantity: size,
+                    leverage: Number(p.leverage)
+                };
+            });
     }
 
     /**
