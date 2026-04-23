@@ -316,8 +316,10 @@ class PositionManager {
             if (level === 1) {
                 updates.tp1OrderId = null;
                 updates.tp1Price = null;
-                updates.slMovedToBreakeven = true;
-                updates.stopLoss = position.entryPrice;
+                // Bug 2 fix: do NOT set slMovedToBreakeven / stopLoss here.
+                // Persist them only AFTER modifySlTp on the exchange succeeds
+                // (see block below). Otherwise the DB can drift ahead of the
+                // exchange state and we'll never retry the move.
             } else if (level === 2) {
                 updates.tp2OrderId = null;
                 updates.tp2Price = null;
@@ -383,18 +385,30 @@ class PositionManager {
                             slTriggerPrice: position.entryPrice
                         });
 
-                        // Update tracked slOrderId if it was replaced during move
-                        if (res && res.success && res.mode === 'replace' && res.slOrderId) {
-                            logger.info('[PositionManager] Updating slOrderId after polling replace-move', {
-                                symbol: position.symbol, old: position.slOrderId, new: res.slOrderId
-                            });
+                        // Bug 2 fix: only now — after the exchange confirms — mark
+                        // the breakeven move in DB / in-memory state. If modifySlTp
+                        // failed or was skipped, the next poll tick will retry because
+                        // slMovedToBreakeven is still false.
+                        if (res && res.success) {
                             const currentRef = (this._positions.get(position.symbol) || [])
-                                .find(x => x.positionId === position.positionId);
-                            if (currentRef) {
-                                const synced = updatePosition(currentRef, { slOrderId: res.slOrderId });
-                                await this._db.updatePosition(synced);
-                                this._replace(synced);
+                                .find(x => x.positionId === position.positionId) || updated;
+                            const patch = {
+                                slMovedToBreakeven: true,
+                                stopLoss: position.entryPrice
+                            };
+                            if (res.mode === 'replace' && res.slOrderId) {
+                                logger.info('[PositionManager] Updating slOrderId after polling replace-move', {
+                                    symbol: position.symbol, old: position.slOrderId, new: res.slOrderId
+                                });
+                                patch.slOrderId = res.slOrderId;
                             }
+                            const synced = updatePosition(currentRef, patch);
+                            await this._db.updatePosition(synced);
+                            this._replace(synced);
+                        } else {
+                            logger.warn('[PositionManager] modifySlTp did not confirm success; will retry', {
+                                symbol: position.symbol, res
+                            });
                         }
                     } else {
                         logger.warn('[PositionManager] Breakeven move skipped (poll path): price too close', {
@@ -745,12 +759,12 @@ class PositionManager {
         }
 
         const remaining = position.remainingQuantity - closeQty;
+        // Bug 2 fix: do NOT set slMovedToBreakeven / stopLoss optimistically.
+        // They are persisted below only after the exchange confirms the SL move.
         const updated = updatePosition(position, {
             remainingQuantity: remaining,
             realizedPnl: position.realizedPnl + (fill.pnl || 0),
             status: remaining > 0 ? 'PARTIAL' : 'CLOSED',
-            slMovedToBreakeven: level === 1 ? true : position.slMovedToBreakeven,
-            stopLoss: level === 1 ? position.entryPrice : position.stopLoss,
             closedAt: remaining > 0 ? null : Date.now()
         });
 
@@ -787,20 +801,30 @@ class PositionManager {
                         orderId: position.slOrderId,
                         slTriggerPrice: position.entryPrice
                     });
-                    
-                    // If the broker had to replace the order (cancel + re-create), 
-                    // capture the new slOrderId to keep local state in sync.
-                    if (res && res.success && res.mode === 'replace' && res.slOrderId) {
-                        logger.info('[PositionManager] Updating slOrderId after replace-move', {
-                            symbol: position.symbol, old: position.slOrderId, new: res.slOrderId
-                        });
-                        const updatedSl = (this._positions.get(position.symbol) || [])
-                            .find(x => x.positionId === position.positionId);
-                        if (updatedSl) {
-                            const synced = updatePosition(updatedSl, { slOrderId: res.slOrderId });
-                            await this._db.updatePosition(synced);
-                            this._replace(synced);
+
+                    // Bug 2 fix: only mark breakeven in DB / memory AFTER exchange
+                    // confirmed the move. If it failed we leave slMovedToBreakeven=false
+                    // so a subsequent retry path can try again.
+                    if (res && res.success) {
+                        const currentRef = (this._positions.get(position.symbol) || [])
+                            .find(x => x.positionId === position.positionId) || updated;
+                        const patch = {
+                            slMovedToBreakeven: true,
+                            stopLoss: position.entryPrice
+                        };
+                        if (res.mode === 'replace' && res.slOrderId) {
+                            logger.info('[PositionManager] Updating slOrderId after replace-move', {
+                                symbol: position.symbol, old: position.slOrderId, new: res.slOrderId
+                            });
+                            patch.slOrderId = res.slOrderId;
                         }
+                        const synced = updatePosition(currentRef, patch);
+                        await this._db.updatePosition(synced);
+                        this._replace(synced);
+                    } else {
+                        logger.warn('[PositionManager] modifySlTp did not confirm success; breakeven not persisted', {
+                            symbol: position.symbol, res
+                        });
                     }
                 } else {
                     logger.warn('[PositionManager] Breakeven move skipped: price too close to entry or already in loss', {

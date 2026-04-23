@@ -215,13 +215,20 @@ class LiveBroker {
         //   LONG:  (fill - entry) * qty
         //   SHORT: (entry - fill) * qty
         // Minus 1x taker fee for the closing leg (open fee already paid).
-        let pnl = null;
+        let pnl = 0;
         if (Number.isFinite(entryPrice) && Number.isFinite(fillPrice) && Number.isFinite(quantity)) {
             const gross = side === 'long'
                 ? (fillPrice - entryPrice) * quantity
                 : (entryPrice - fillPrice) * quantity;
             const fee = Math.abs(fillPrice * quantity) * this._takerFeeRate;
             pnl = gross - fee;
+        } else {
+            // Bug 1 fix: when entryPrice is missing (e.g. orphan-synced positions
+            // that were opened before multi-user tracking), fall back to 0 instead
+            // of null so realized_pnl / totalTrades still accumulate downstream.
+            logger.warn('[LiveBroker] closeMarket: pnl unknown, defaulting to 0', {
+                symbol, side, quantity, entryPrice, fillPrice
+            });
         }
 
         logger.info('[LiveBroker] market close', {
