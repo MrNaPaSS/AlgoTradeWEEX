@@ -109,6 +109,14 @@
     // Render all three stat tiles for the currently selected period.
     function renderStats() {
         var s = _statsFor(_statsPeriod);
+        // Diagnostic: confirm each period bucket actually has data.
+        try {
+            console.log('[stats] period=' + _statsPeriod,
+                'today=', _statsToday.totalTrades, '/', _statsToday.totalPnl,
+                '7d=',    _stats7d.totalTrades,    '/', _stats7d.totalPnl,
+                '30d=',   _stats30d.totalTrades,   '/', _stats30d.totalPnl,
+                'all=',   _statsAllTime.totalTrades,'/', _statsAllTime.totalPnl);
+        } catch (e) {}
         var pnl = Number(s.totalPnl || 0);
 
         var tradesEl  = document.getElementById('stat-trades');
