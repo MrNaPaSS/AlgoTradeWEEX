@@ -217,10 +217,28 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
             // Fetch live position data from exchange for unrealized PnL / liquidation price.
             let livePositions = [];
             try {
-                if (engine.broker.getOpenPositions) {
+                if (engine.broker && typeof engine.broker.getOpenPositions === 'function') {
                     livePositions = await engine.broker.getOpenPositions();
+                } else {
+                    logger.warn('[users] engine.broker.getOpenPositions is not a function', {
+                        hasBroker: Boolean(engine.broker),
+                        brokerType: engine.broker && engine.broker.constructor && engine.broker.constructor.name
+                    });
                 }
-            } catch { /* ignore */ }
+            } catch (err) {
+                logger.warn('[users] live positions fetch failed', { message: err.message });
+            }
+            logger.info('[users] /me/status livePositions', {
+                count: livePositions.length,
+                sample: livePositions[0] ? {
+                    symbol: livePositions[0].symbol,
+                    side: livePositions[0].side,
+                    unrealizedPnl: livePositions[0].unrealizedPnl,
+                    liquidatePrice: livePositions[0].liquidatePrice,
+                    marginSize: livePositions[0].marginSize
+                } : null,
+                trackedPositions: positions.map(p => ({ symbol: p.symbol, side: p.side }))
+            });
 
             const findLive = (symbol, side) => livePositions.find(lp =>
                 lp.symbol === symbol && String(lp.side).toLowerCase() === String(side).toLowerCase()
