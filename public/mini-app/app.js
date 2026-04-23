@@ -82,6 +82,54 @@
     let _timer  = null;
     let _prevBal = null;
     let _skeletonCleared = false;
+    let _hasKeys = false;
+    let _lastProfile = null;
+
+    // Render the Onboarding/API screen in the correct state — either the registration
+    // form (no keys yet) or the "connected" card with balance + disconnect button.
+    function renderOnboardingState(connected, profile, balance, positionsCount, paused) {
+        var form = document.getElementById('form-register');
+        var connBlock = document.getElementById('onboarding-connected');
+        var infoCard = document.querySelector('#screen-onboarding .info-card');
+        var header = document.querySelector('#screen-onboarding .screen-header');
+
+        if (connected) {
+            if (form) form.style.display = 'none';
+            if (infoCard) infoCard.style.display = 'none';
+            if (connBlock) { connBlock.style.display = ''; connBlock.classList.remove('hidden'); }
+            if (header) {
+                var title = header.querySelector('.screen-title');
+                var sub = header.querySelector('.screen-sub');
+                if (title) title.textContent = 'API подключён';
+                if (sub) sub.textContent = 'Ваш WEEX аккаунт привязан и торговый движок активен';
+            }
+            var uEl = document.getElementById('connected-username');
+            if (uEl && profile) uEl.textContent = profile.username ? '@' + profile.username : ('ID ' + (profile.userId || ''));
+            var bEl = document.getElementById('connected-balance');
+            if (bEl) {
+                bEl.textContent = (balance != null && Number.isFinite(Number(balance)))
+                    ? Number(balance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDT'
+                    : '— USDT';
+            }
+            var pEl = document.getElementById('connected-positions');
+            if (pEl) pEl.textContent = positionsCount != null ? String(positionsCount) : '0';
+            var sEl = document.getElementById('connected-status');
+            if (sEl) {
+                sEl.textContent = paused ? 'Пауза' : 'Активен';
+                sEl.style.color = paused ? '#FFB547' : '#00D97E';
+            }
+        } else {
+            if (form) form.style.display = '';
+            if (infoCard) infoCard.style.display = '';
+            if (connBlock) { connBlock.style.display = 'none'; connBlock.classList.add('hidden'); }
+            if (header) {
+                var title2 = header.querySelector('.screen-title');
+                var sub2 = header.querySelector('.screen-sub');
+                if (title2) title2.textContent = 'Подключение';
+                if (sub2) sub2.textContent = 'Введите API ключи для активации торгового движка';
+            }
+        }
+    }
 
     // ── Screen routing ────────────────────────────────────────────────────────
     function showScreen(name) {
@@ -168,11 +216,34 @@
             var data = await api('POST', '/register', { apiKey, secretKey, passphrase });
             if (data.success) {
                 hapticNotify('success');
-                toast('Подключено! Баланс: $' + Number(data.balance).toFixed(2), 'ok');
+                toast('Подключено! Баланс: $' + Number(data.balance).toFixed(2), 'ok', 4000);
                 document.getElementById('inp-apikey').value = '';
                 document.getElementById('inp-secret').value = '';
                 document.getElementById('inp-pass').value   = '';
-                setTimeout(function () { showScreen('dashboard'); }, 1200);
+
+                // Pre-fill dashboard with balance from register response so user
+                // immediately sees "connected" state without waiting for refresh().
+                var balEl = document.getElementById('balance-value');
+                if (balEl) {
+                    balEl.textContent = Number(data.balance).toLocaleString('en-US', {
+                        minimumFractionDigits: 2, maximumFractionDigits: 2
+                    });
+                    _prevBal = Number(data.balance);
+                }
+                // Clear all skeletons so dashboard looks live immediately.
+                _skeletonCleared = true;
+                document.querySelectorAll('.skel-line, .skel-card').forEach(function (s) { s.remove(); });
+                setEl('stat-trades', 0);
+                setEl('stat-winrate', '0%');
+                var pnlEl = document.getElementById('stat-pnl');
+                if (pnlEl) { pnlEl.textContent = '+$0.00'; pnlEl.className = 'stat-val pnl-positive'; }
+
+                _hasKeys = true;
+                _lastProfile = { userId: (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) || null,
+                                 username: (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.username) || null };
+                // Swap the API screen to the connected card right away so user sees confirmation.
+                renderOnboardingState(true, _lastProfile, Number(data.balance), 0, false);
+                setTimeout(function () { showScreen('dashboard'); }, 800);
             } else {
                 hapticNotify('error');
                 toast(data.error || 'Ошибка подключения', 'err');
@@ -389,7 +460,17 @@
             setEl('pos-count', positions.length);
             renderPositions(positions);
 
-        } catch (e) { /* ignore */ }
+            // Keep the "connected" card on the API screen in sync.
+            if (_hasKeys) {
+                renderOnboardingState(true, _lastProfile, bal, positions.length, _paused);
+            }
+
+        } catch (e) {
+            // Surface the error so we can see why dashboard stays on skeletons.
+            var balEl = document.getElementById('balance-value');
+            if (balEl) balEl.textContent = 'ERR';
+            toast('Refresh: ' + (e && e.message ? e.message : 'network'), 'err', 5000);
+        }
     }
 
     function setEl(id, val) {
@@ -510,12 +591,10 @@
 
     // ── Init ──────────────────────────────────────────────────────────────────
     async function init() {
-        // Show onboarding immediately so UI is never blank while API is pending.
-        showScreen('onboarding');
-
-        // Probe profile with a short timeout so a dead backend doesn't freeze UX.
+        // Probe profile first. Longer timeout (8s) — WEEX REST sometimes needs a moment.
         const controller = new AbortController();
-        const timeout = setTimeout(function () { controller.abort(); }, 4000);
+        const timeout = setTimeout(function () { controller.abort(); }, 8000);
+        let profile = null;
         try {
             const res = await fetch(`${API_BASE}/api/users/me`, {
                 headers: {
@@ -526,27 +605,62 @@
                 signal: controller.signal
             });
             clearTimeout(timeout);
-            if (!res.ok) return; // keep onboarding
-            const profile = await res.json();
-            if (profile.success && profile.user && profile.user.hasKeys) {
-                await loadSettings();
-                showScreen('dashboard');
+            if (res.ok) {
+                const body = await res.json();
+                if (body && body.success) profile = body.user;
             }
         } catch (e) {
             clearTimeout(timeout);
-            // stay on onboarding
             if (!initData) {
                 console.warn('[App] No Telegram initData — running outside Telegram, API will reject.');
             } else {
                 console.warn('[App] profile probe failed', e);
             }
         }
+
+        if (profile && profile.hasKeys) {
+            _hasKeys = true;
+            _lastProfile = profile;
+            // Pre-render the API screen in "connected" state so switching tabs never shows empty inputs.
+            renderOnboardingState(true, profile, null, 0, false);
+            await loadSettings();
+            showScreen('dashboard');
+        } else {
+            _hasKeys = false;
+            renderOnboardingState(false);
+            showScreen('onboarding');
+        }
+    }
+
+    // Disconnect button inside "connected" card on the API screen
+    var disconnectBtn = document.getElementById('btn-disconnect');
+    if (disconnectBtn) {
+        disconnectBtn.addEventListener('click', async function () {
+            haptic('heavy');
+            var ok = await showConfirm('Отключить аккаунт? API ключи будут удалены.');
+            if (!ok) return;
+            try {
+                await api('DELETE', '/me');
+                hapticNotify('warning');
+                _hasKeys = false;
+                _lastProfile = null;
+                renderOnboardingState(false);
+                toast('API ключи удалены', 'info');
+                showScreen('onboarding');
+            } catch (err) {
+                hapticNotify('error');
+                toast(err.message || 'Ошибка', 'err');
+            }
+        });
     }
 
     window.App = {
         show: function (name) {
             haptic('light');
             if (name === 'settings') loadSettings();
+            // When navigating to the API/onboarding screen, make sure it reflects
+            // the current connection state (form vs. connected card).
+            if (name === 'onboarding') renderOnboardingState(_hasKeys, _lastProfile);
             showScreen(name);
         },
         toggleEye: toggleEye
