@@ -29,7 +29,9 @@
             method,
             headers: {
                 'Authorization': `tma ${initData}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                // Bypass ngrok free-tier interstitial warning page for browser fetches.
+                'ngrok-skip-browser-warning': 'true'
             }
         };
         if (body !== undefined) opts.body = JSON.stringify(body);
@@ -518,7 +520,8 @@
             const res = await fetch(`${API_BASE}/api/users/me`, {
                 headers: {
                     'Authorization': `tma ${initData}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
                 },
                 signal: controller.signal
             });
