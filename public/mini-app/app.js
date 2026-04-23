@@ -508,16 +508,35 @@
 
     // ── Init ──────────────────────────────────────────────────────────────────
     async function init() {
+        // Show onboarding immediately so UI is never blank while API is pending.
+        showScreen('onboarding');
+
+        // Probe profile with a short timeout so a dead backend doesn't freeze UX.
+        const controller = new AbortController();
+        const timeout = setTimeout(function () { controller.abort(); }, 4000);
         try {
-            var profile = await api('GET', '/me');
+            const res = await fetch(`${API_BASE}/api/users/me`, {
+                headers: {
+                    'Authorization': `tma ${initData}`,
+                    'Content-Type': 'application/json'
+                },
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+            if (!res.ok) return; // keep onboarding
+            const profile = await res.json();
             if (profile.success && profile.user && profile.user.hasKeys) {
                 await loadSettings();
                 showScreen('dashboard');
-            } else {
-                showScreen('onboarding');
             }
         } catch (e) {
-            showScreen('onboarding');
+            clearTimeout(timeout);
+            // stay on onboarding
+            if (!initData) {
+                console.warn('[App] No Telegram initData — running outside Telegram, API will reject.');
+            } else {
+                console.warn('[App] profile probe failed', e);
+            }
         }
     }
 
