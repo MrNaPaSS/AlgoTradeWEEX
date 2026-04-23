@@ -5,6 +5,16 @@ services:
     buildCommand: ''
     staticPublishPath: ./public/mini-app
     pullRequestPreviewsEnabled: false
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-store, no-cache, must-revalidate, max-age=0
+      - path: /*
+        name: Pragma
+        value: no-cache
+      - path: /*
+        name: Expires
+        value: '0'
     routes:
       - type: rewrite
         source: /*
