@@ -192,6 +192,34 @@ class WeexFuturesClient {
         return res?.data || res || [];
     }
 
+    /**
+     * Historical fills with realizedPnl per execution.
+     * GET /capi/v3/userTrades — WEEX USDT-M Futures.
+     *
+     * @param {Object} [opts]
+     * @param {string} [opts.symbol]    — e.g. 'BTCUSDT'; omit to query all symbols
+     * @param {string|number} [opts.orderId] — only fills of this order
+     * @param {number} [opts.startTime] — ms epoch
+     * @param {number} [opts.endTime]   — ms epoch (must be ≥ startTime)
+     * @param {number} [opts.limit=100] — 1..100
+     * @returns {Promise<Array<{
+     *   id:number, orderId:number, symbol:string, buyer:boolean, maker:boolean,
+     *   commission:string, commissionAsset:string, price:string, qty:string,
+     *   quoteQty:string, realizedPnl:string, side:'BUY'|'SELL',
+     *   positionSide:'LONG'|'SHORT', time:number
+     * }>>}
+     */
+    async getUserTrades({ symbol, orderId, startTime, endTime, limit = 100 } = {}) {
+        const params = { limit };
+        if (symbol)    params.symbol    = symbol;
+        if (orderId)   params.orderId   = orderId;
+        if (startTime) params.startTime = startTime;
+        if (endTime)   params.endTime   = endTime;
+
+        const res = await this._request('GET', ENDPOINTS.order.userTrades, { params });
+        return res?.data || res || [];
+    }
+
     // -------------------------------------------------------------------------
     // Market (public — no auth required)
     // -------------------------------------------------------------------------

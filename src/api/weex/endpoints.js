@@ -41,6 +41,8 @@ const ENDPOINTS = Object.freeze({
         cancelAllAlgo: '/capi/v3/algoOpenOrders',
         /** GET /capi/v3/allOrders — historical orders */
         allOrders:    '/capi/v3/allOrders',
+        /** GET /capi/v3/userTrades — historical fills with realizedPnl per execution */
+        userTrades:   '/capi/v3/userTrades',
         /** POST/DELETE /capi/v3/algoOrder — place or cancel a single conditional order */
         algoOrder:    '/capi/v3/algoOrder',
         /** POST /capi/v3/placeTpSlOrder — place specialized TP/SL order */
