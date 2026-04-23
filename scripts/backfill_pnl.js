@@ -123,6 +123,9 @@ const userIdArg = (process.argv.find(a => a.startsWith('--user-id=')) || '').spl
         if (!DRY) {
             db._db.run('UPDATE positions SET realized_pnl = ? WHERE position_id = ?',
                        [netPnl, p.position_id]);
+            // _db.run bypasses the Database wrapper that normally flips the
+            // dirty flag — flip it manually so _persistIfDirty() actually flushes.
+            db._markDirty();
         }
         updated++;
         totalRecovered += netPnl;
@@ -131,7 +134,15 @@ const userIdArg = (process.argv.find(a => a.startsWith('--user-id=')) || '').spl
         await new Promise(r => setTimeout(r, 250));
     }
 
-    if (!DRY) db._persistIfDirty?.();
+    if (!DRY) {
+        db._persistIfDirty?.();
+        // Give the sync fs.writeFileSync a moment to flush, then assert.
+        const verify = db._db.exec(
+            "SELECT COUNT(*) FROM positions WHERE status='CLOSED' AND realized_pnl <> 0"
+        );
+        const nonZero = verify[0]?.values?.[0]?.[0] ?? 0;
+        console.log(`Post-write assert: non-zero realized_pnl rows = ${nonZero}`);
+    }
 
     console.log('\n=== SUMMARY ===');
     console.log(`Updated:        ${updated}`);
