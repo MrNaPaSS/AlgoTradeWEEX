@@ -375,6 +375,14 @@
         </div>
     </div>
 
+    <!-- Stats period switcher -->
+    <div class="stats-period" role="tablist" aria-label="Период статистики">
+        <button type="button" class="period-btn is-active" data-period="today" role="tab" aria-selected="true">Сегодня</button>
+        <button type="button" class="period-btn" data-period="7d"  role="tab" aria-selected="false">7 дней</button>
+        <button type="button" class="period-btn" data-period="30d" role="tab" aria-selected="false">Месяц</button>
+        <button type="button" class="period-btn" data-period="all" role="tab" aria-selected="false">Всё время</button>
+    </div>
+
     <!-- Stats bento -->
     <div class="stats-bento">
         <div class="stat-tile">
@@ -382,18 +390,21 @@
             <span class="stat-val" id="stat-trades">
                 <span class="skel-line" style="width:36px;height:22px;border-radius:6px"></span>
             </span>
+            <span class="stat-sub" id="stat-trades-sub"></span>
         </div>
         <div class="stat-tile">
             <span class="stat-label">Винрейт</span>
             <span class="stat-val" id="stat-winrate">
                 <span class="skel-line" style="width:44px;height:22px;border-radius:6px"></span>
             </span>
+            <span class="stat-sub" id="stat-winrate-sub"></span>
         </div>
         <div class="stat-tile">
-            <span class="stat-label">P&amp;L сегодня</span>
+            <span class="stat-label" id="stat-pnl-label">P&amp;L</span>
             <span class="stat-val" id="stat-pnl">
                 <span class="skel-line" style="width:56px;height:22px;border-radius:6px"></span>
             </span>
+            <span class="stat-sub" id="stat-pnl-sub"></span>
         </div>
     </div>
 
@@ -436,7 +447,7 @@
 
 </section>
 
-<script src="config.js?v=20260423d"></script>
-<script src="app.js?v=20260423d"></script>
+<script src="config.js?v=20260424a"></script>
+<script src="app.js?v=20260424a"></script>
 </body>
 </html>

@@ -209,7 +209,14 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
             const riskSnap = engine.riskGuard.snapshot();
             // Include orphaned (pre-multi-user) trades so the Mini App shows
             // the same numbers as the bot's /stats command for the single-user case.
-            const stats = await db.getDailyStats(userId, { includeOrphaned: true });
+            const now = Date.now();
+            const DAY = 24 * 60 * 60 * 1000;
+            const [stats, stats7d, stats30d, allTimeStats] = await Promise.all([
+                db.getDailyStats(userId, { includeOrphaned: true }),
+                db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 7 * DAY }),
+                db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY }),
+                db.getAllTimeStats(userId, { includeOrphaned: true })
+            ]);
 
             let balance = null;
             try {
@@ -255,7 +262,10 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                     };
                 }),
                 risk: riskSnap,
-                stats: stats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 }
+                stats: stats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
+                stats7d:  stats7d  || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
+                stats30d: stats30d || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
+                allTimeStats: allTimeStats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 }
             });
         } catch (err) {
             logger.error('[users] status error', { message: err.message });

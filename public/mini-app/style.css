@@ -664,11 +664,53 @@ input[type=range].range-slider::-moz-range-thumb {
     opacity: 0.7;
 }
 
+/* ── Stats period switcher ── */
+.stats-period {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 4px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+.period-btn {
+    flex: 1;
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 8px 6px;
+    border-radius: calc(var(--r) - 4px);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.period-btn:hover {
+    color: var(--text);
+}
+.period-btn.is-active {
+    background: var(--accent, #27f0b5);
+    color: #07120e;
+}
+
 /* ── Stats bento ── */
 .stats-bento {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 8px;
+}
+.stat-sub {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-3);
+    letter-spacing: 0.2px;
+    min-height: 12px;
 }
 .stat-tile {
     background: var(--surface);

@@ -85,6 +85,86 @@
     let _skeletonCleared = false;
     let _hasKeys = false;
     let _lastProfile = null;
+    // Stats cache — populated from /me/status on each refresh(); the active
+    // period is chosen via the .period-btn group.
+    let _statsToday   = { totalTrades: 0, winRate: 0, totalPnl: 0 };
+    let _stats7d      = { totalTrades: 0, winRate: 0, totalPnl: 0 };
+    let _stats30d     = { totalTrades: 0, winRate: 0, totalPnl: 0 };
+    let _statsAllTime = { totalTrades: 0, winRate: 0, totalPnl: 0 };
+    let _statsPeriod  = 'today';
+
+    function _statsFor(period) {
+        if (period === '7d')  return _stats7d;
+        if (period === '30d') return _stats30d;
+        if (period === 'all') return _statsAllTime;
+        return _statsToday;
+    }
+    function _periodLabel(period) {
+        if (period === '7d')  return 'за 7 дней';
+        if (period === '30d') return 'за месяц';
+        if (period === 'all') return 'за всё время';
+        return 'сегодня';
+    }
+
+    // Render all three stat tiles for the currently selected period.
+    function renderStats() {
+        var s = _statsFor(_statsPeriod);
+        var pnl = Number(s.totalPnl || 0);
+
+        var tradesEl  = document.getElementById('stat-trades');
+        var winEl     = document.getElementById('stat-winrate');
+        var pnlEl     = document.getElementById('stat-pnl');
+        var pnlLabel  = document.getElementById('stat-pnl-label');
+        var tradesSub = document.getElementById('stat-trades-sub');
+        var winSub    = document.getElementById('stat-winrate-sub');
+        var pnlSub    = document.getElementById('stat-pnl-sub');
+
+        if (tradesEl) tradesEl.textContent = s.totalTrades || 0;
+        if (winEl)    winEl.textContent    = Math.round(s.winRate || 0) + '%';
+        if (pnlEl) {
+            pnlEl.textContent = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2);
+            pnlEl.className   = 'stat-val ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+        }
+        if (pnlLabel) pnlLabel.textContent = 'P&L ' + _periodLabel(_statsPeriod);
+
+        // Subtext: win/loss split and all-time comparison.
+        if (tradesSub) {
+            var wins = s.winTrades || 0, losses = s.lossTrades || 0;
+            tradesSub.textContent = (wins || losses)
+                ? (wins + ' / ' + losses + ' W/L')
+                : '';
+        }
+        if (winSub) {
+            winSub.textContent = (s.totalTrades || 0) > 0
+                ? ((s.winTrades || 0) + ' из ' + s.totalTrades)
+                : '';
+        }
+        if (pnlSub) {
+            var all = _statsAllTime;
+            var allPnl = Number(all.totalPnl || 0);
+            pnlSub.textContent = (_statsPeriod !== 'all' && (all.totalTrades || 0) > 0)
+                ? ('всего: ' + (allPnl >= 0 ? '+' : '−') + '$' + Math.abs(allPnl).toFixed(2))
+                : '';
+        }
+
+        // Sync active button state.
+        var btns = document.querySelectorAll('.period-btn');
+        for (var i = 0; i < btns.length; i++) {
+            var on = btns[i].getAttribute('data-period') === _statsPeriod;
+            btns[i].classList.toggle('is-active', on);
+            btns[i].setAttribute('aria-selected', on ? 'true' : 'false');
+        }
+    }
+
+    // Attach period-switcher clicks once (DOM is ready by the time app.js runs).
+    document.addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest && e.target.closest('.period-btn');
+        if (!btn) return;
+        var p = btn.getAttribute('data-period');
+        if (!p || p === _statsPeriod) return;
+        _statsPeriod = p;
+        renderStats();
+    });
 
     // Render the Onboarding/API screen in the correct state — either the registration
     // form (no keys yet) or the "connected" card with balance + disconnect button.
@@ -412,16 +492,11 @@
                 balEl.textContent = '—';
             }
 
-            // Stats
-            var s = data.stats || {};
-            var pnl = Number(s.totalPnl || 0);
-            setEl('stat-trades',  s.totalTrades || 0);
-            setEl('stat-winrate', Math.round(s.winRate || 0) + '%');
-            var pnlEl = document.getElementById('stat-pnl');
-            if (pnlEl) {
-                pnlEl.textContent = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2);
-                pnlEl.className   = 'stat-val ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
-            }
+            // Stats — cache both scopes, the active one is chosen by the period switch.
+            _statsToday   = data.stats || { totalTrades: 0, winRate: 0, totalPnl: 0 };
+            _statsAllTime = data.allTimeStats || { totalTrades: 0, winRate: 0, totalPnl: 0 };
+            renderStats();
+            var pnl = Number((_statsPeriod === 'today' ? _statsToday : _statsAllTime).totalPnl || 0);
 
             // Sparkline
             if (bal != null) {

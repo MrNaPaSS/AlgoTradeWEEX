@@ -381,8 +381,17 @@ class Database {
     async getDailyStats(userId, { includeOrphaned = false } = {}) {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
-        const startTs = todayStart.getTime();
+        return this._aggregateStats(userId, {
+            includeOrphaned,
+            sinceTs: todayStart.getTime()
+        });
+    }
 
+    async getAllTimeStats(userId, { includeOrphaned = false } = {}) {
+        return this._aggregateStats(userId, { includeOrphaned, sinceTs: null });
+    }
+
+    async _aggregateStats(userId, { includeOrphaned = false, sinceTs = null } = {}) {
         let sql = `
             SELECT
                 COUNT(*) as total,
@@ -390,8 +399,12 @@ class Database {
                 SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
                 SUM(realized_pnl) as total_pnl
             FROM positions
-            WHERE status = 'CLOSED' AND closed_at >= ?`;
-        const params = [startTs];
+            WHERE status = 'CLOSED'`;
+        const params = [];
+        if (sinceTs !== null) {
+            sql += ` AND closed_at >= ?`;
+            params.push(sinceTs);
+        }
         if (userId) {
             // Optionally include "orphaned" legacy trades (no user_id) — these
             // were closed by the single-user orchestrator before multi-user mode.
