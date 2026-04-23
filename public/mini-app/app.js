@@ -20,6 +20,10 @@
     }
 
     // ── API ───────────────────────────────────────────────────────────────────
+    // API_BASE is injected by config.js (loaded before this script in index.html).
+    // Falls back to same-origin when config is missing (e.g. local dev).
+    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '';
+
     async function api(method, path, body) {
         const opts = {
             method,
@@ -29,7 +33,7 @@
             }
         };
         if (body !== undefined) opts.body = JSON.stringify(body);
-        const res = await fetch(`/api/users${path}`, opts);
+        const res = await fetch(`${API_BASE}/api/users${path}`, opts);
         const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         return data;

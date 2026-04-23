@@ -7,7 +7,7 @@ const requestId = require('./middleware/requestId');
 const { webhookRateLimiter } = require('./middleware/rateLimit');
 const errorHandler = require('./middleware/errorHandler');
 
-const { createDatabase } = require('./services/createDatabase');
+const { Database } = require('./services/database');
 const { WeexFuturesClient } = require('./api/weex/WeexFuturesClient');
 const { WeexWebSocket } = require('./api/weex/WeexWebSocket');
 const { Container } = require('./container');
@@ -59,7 +59,7 @@ async function bootstrap() {
     const container = new Container();
 
     // 1. Infrastructure
-    const db = createDatabase();
+    const db = new Database();
     await db.init();
     container.registerValue('db', db);
 
@@ -264,6 +264,26 @@ async function bootstrap() {
     app.set('db', db);
 
     app.use(requestId);
+
+    // CORS for Mini App hosted on a separate origin (render.com static site).
+    // MINI_APP_ORIGIN is a comma-separated list of allowed origins (e.g.
+    // "https://algotradeweex.onrender.com,http://localhost:8080"). Leave empty
+    // to fall back to a permissive policy suitable for dev.
+    const corsAllow = (process.env.MINI_APP_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+    app.use('/api', (req, res, next) => {
+        const origin = req.headers.origin;
+        if (!origin) return next();
+        const allowed = corsAllow.length === 0 || corsAllow.includes(origin);
+        if (allowed) {
+            res.setHeader('Access-Control-Allow-Origin', origin);
+            res.setHeader('Vary', 'Origin');
+            res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type');
+            res.setHeader('Access-Control-Max-Age', '600');
+        }
+        if (req.method === 'OPTIONS') return res.sendStatus(allowed ? 204 : 403);
+        next();
+    });
 
     // Routes (rate-limit applies ONLY to /webhook, not /health or /metrics)
     app.use('/', createHealthRouter({ db, weexWs, weexClient }));
