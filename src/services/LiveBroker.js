@@ -122,46 +122,63 @@ class LiveBroker {
         let slOrderId = null;
         let tpOrderId = null;
 
-        if (stopLoss || tpPrice) {
-            try {
-                logger.info('[LiveBroker] Attaching SL/TP separately via V3 placeTpSlOrder...', { symbol, stopLoss, tpPrice });
-                
-                if (stopLoss) {
-                    const slRes = await this._client.placeTpSlOrder({
-                        symbol,
-                        planType: 'STOP_LOSS',
-                        triggerPrice: String(stopLoss),
-                        executePrice: '0', // Market
-                        quantity: String(quantity),
-                        positionSide: weexPositionSide,
-                        triggerPriceType: 'MARK_PRICE',
-                        clientAlgoId: 'sl_' + Date.now()
-                    });
-                    slOrderId = this._parseTpSlOrderId(slRes);
-                    logger.debug('[LiveBroker] SL attach response', { slRes, parsed: slOrderId });
-                }
+        if (stopLoss) {
+            logger.info('[LiveBroker] Attaching SL via V3 placeTpSlOrder...', { symbol, stopLoss });
+            slOrderId = await this._attachSlWithRetry({
+                symbol, quantity, stopLoss, weexPositionSide
+            });
 
-                if (tpPrice) {
-                    const tpRes = await this._client.placeTpSlOrder({
+            if (!slOrderId) {
+                // FAIL-CLOSED: naked entry is the single worst failure mode in
+                // leveraged futures — one adverse candle can liquidate. If all
+                // SL attach retries failed, close the entry at market immediately
+                // and throw so the caller treats this as a failed open, not a
+                // successful one with silent degradation.
+                logger.error('[LiveBroker] CRITICAL: SL attach failed after retries — closing naked entry (fail-closed)', {
+                    symbol, side, quantity, stopLoss
+                });
+                try {
+                    await this._client.placeOrder({
                         symbol,
-                        planType: 'TAKE_PROFIT',
-                        triggerPrice: String(tpPrice),
-                        executePrice: '0', // Market
-                        quantity: String(quantity),
+                        side: side === 'long' ? SIDE.SELL : SIDE.BUY,
                         positionSide: weexPositionSide,
-                        triggerPriceType: 'MARK_PRICE',
-                        clientAlgoId: 'tp_' + Date.now()
+                        orderType: ORDER_TYPE.MARKET,
+                        quantity
                     });
-                    tpOrderId = this._parseTpSlOrderId(tpRes);
-                    logger.debug('[LiveBroker] TP attach response', { tpRes, parsed: tpOrderId });
+                    logger.warn('[LiveBroker] fail-closed market close succeeded — entry reversed', { symbol });
+                } catch (closeErr) {
+                    logger.error('[LiveBroker] CRITICAL: fail-closed market close ALSO failed — MANUAL INTERVENTION REQUIRED', {
+                        symbol, message: closeErr.message
+                    });
                 }
-
-                logger.info('[LiveBroker] SL/TP protection active', { slOrderId, tpOrderId });
-            } catch (err) {
-                logger.error('[LiveBroker] CRITICAL: Failed to attach SL/TP protection', { message: err.message });
-                // We don't throw here to avoid "orphan" positions if entry succeeded, 
-                // but we log it as CRITICAL so the user knows protection failed.
+                const e = new Error(`SL attach failed for ${symbol} — entry fail-closed`);
+                e.code = 'SL_ATTACH_FAILED';
+                throw e;
             }
+        }
+
+        if (tpPrice) {
+            try {
+                const tpRes = await this._client.placeTpSlOrder({
+                    symbol,
+                    planType: 'TAKE_PROFIT',
+                    triggerPrice: String(tpPrice),
+                    executePrice: '0', // Market
+                    quantity: String(quantity),
+                    positionSide: weexPositionSide,
+                    triggerPriceType: 'MARK_PRICE',
+                    clientAlgoId: 'tp_' + Date.now()
+                });
+                tpOrderId = this._parseTpSlOrderId(tpRes);
+                logger.debug('[LiveBroker] TP attach response', { tpRes, parsed: tpOrderId });
+            } catch (err) {
+                // TP attach is non-critical (SL protects from loss; ladder handles TPs).
+                logger.warn('[LiveBroker] single TP attach failed (non-critical)', { symbol, message: err.message });
+            }
+        }
+
+        if (slOrderId || tpOrderId) {
+            logger.info('[LiveBroker] SL/TP protection active', { slOrderId, tpOrderId });
         }
 
         logger.info('[LiveBroker] market open', {
@@ -328,6 +345,58 @@ class LiveBroker {
         }
         if (res.orderId) return String(res.orderId);
         if (Array.isArray(res.data)) return this._parseTpSlOrderId(res.data);
+        return null;
+    }
+
+    /**
+     * Place a STOP_LOSS plan order with bounded retries. Returns the orderId
+     * on success, null if all attempts failed. Transient WEEX errors (rate
+     * limit, network blip, 5xx) are expected and retried; permanent errors
+     * (bad params, position already closed) short-circuit out after first try
+     * via the error shape. Caller must treat null as fatal and fail-closed.
+     */
+    async _attachSlWithRetry({ symbol, quantity, stopLoss, weexPositionSide }) {
+        const maxAttempts = 3;
+        let lastErr = null;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const slRes = await this._client.placeTpSlOrder({
+                    symbol,
+                    planType: 'STOP_LOSS',
+                    triggerPrice: String(stopLoss),
+                    executePrice: '0', // Market on trigger
+                    quantity: String(quantity),
+                    positionSide: weexPositionSide,
+                    triggerPriceType: 'MARK_PRICE',
+                    // Unique clientAlgoId per attempt so a silent success on attempt N
+                    // doesn't collide with the retry's id.
+                    clientAlgoId: `sl_${Date.now()}_${attempt}`
+                });
+                const id = this._parseTpSlOrderId(slRes);
+                if (id) {
+                    if (attempt > 1) {
+                        logger.warn('[LiveBroker] SL attach succeeded after retry', { symbol, attempt, slOrderId: id });
+                    }
+                    return id;
+                }
+                logger.warn('[LiveBroker] SL attach returned no orderId', { symbol, attempt, slRes });
+            } catch (err) {
+                lastErr = err;
+                logger.warn('[LiveBroker] SL attach attempt failed', {
+                    symbol, attempt, message: err.message, code: err.code
+                });
+            }
+            if (attempt < maxAttempts) {
+                // Linear backoff 400 / 800ms — bounded total wait ~1.2s so the
+                // entry isn't naked for long while transient errors clear.
+                await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+        }
+        if (lastErr) {
+            logger.error('[LiveBroker] SL attach exhausted retries', {
+                symbol, message: lastErr.message, code: lastErr.code
+            });
+        }
         return null;
     }
 

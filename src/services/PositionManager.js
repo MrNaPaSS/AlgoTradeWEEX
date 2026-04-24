@@ -398,21 +398,22 @@ class PositionManager {
             // tracked slOrderId so the fallback cancels ONLY the old SL.
             if (level === 1 && position.slOrderId && typeof this._broker.modifySlTp === 'function') {
                 try {
-                    // Bug 2 fix: Safety distance check for breakeven
-                    // Use a 0.1% buffer. We need markPrice here. 
-                    // Since _checkTpFill doesn't have markPrice, we use fillPrice as approximation.
+                    const beSl = this._computeBreakevenPrice(position, fillPrice);
+                    // Safety distance check — SL must stay on the correct side of
+                    // the current (fill) price with a 0.1% buffer to avoid reject.
                     const buffer = fillPrice * 0.001;
-                    const isLongValid = position.side === 'long' && position.entryPrice < (fillPrice - buffer);
-                    const isShortValid = position.side === 'short' && position.entryPrice > (fillPrice + buffer);
+                    const isLongValid = position.side === 'long' && beSl != null && beSl < (fillPrice - buffer);
+                    const isShortValid = position.side === 'short' && beSl != null && beSl > (fillPrice + buffer);
 
                     if (isLongValid || isShortValid) {
-                        logger.info('[PositionManager] Moving exchange SL to breakeven (poll path)', {
-                            symbol: position.symbol, slOrderId: position.slOrderId, entryPrice: position.entryPrice
+                        logger.info('[PositionManager] Moving exchange SL to fee-adjusted breakeven (poll path)', {
+                            symbol: position.symbol, slOrderId: position.slOrderId,
+                            entryPrice: position.entryPrice, beSl
                         });
                         const res = await this._broker.modifySlTp({
                             symbol: position.symbol,
                             orderId: position.slOrderId,
-                            slTriggerPrice: position.entryPrice
+                            slTriggerPrice: beSl
                         });
 
                         // Bug 2 fix: only now — after the exchange confirms — mark
@@ -424,7 +425,7 @@ class PositionManager {
                                 .find(x => x.positionId === position.positionId) || updated;
                             const patch = {
                                 slMovedToBreakeven: true,
-                                stopLoss: position.entryPrice
+                                stopLoss: beSl
                             };
                             if (res.mode === 'replace' && res.slOrderId) {
                                 logger.info('[PositionManager] Updating slOrderId after polling replace-move', {
@@ -454,6 +455,36 @@ class PositionManager {
         } catch (err) {
             logger.debug(`[PositionManager] checkTpFill failed`, { orderId, message: err.message });
         }
+    }
+
+    /**
+     * True breakeven on a leveraged futures position includes taker fees on
+     * BOTH legs (entry already paid + exit not yet paid). Naively setting SL
+     * to entryPrice guarantees a small loss on every "breakeven" exit.
+     *
+     *   LONG:  need price P such that (P - entry)*qty = fee*entry*qty + fee*P*qty
+     *          → P = entry * (1 + fee) / (1 - fee)
+     *   SHORT: entry*qty − P*qty = fee*entry*qty + fee*P*qty
+     *          → P = entry * (1 - fee) / (1 + fee)
+     *
+     * Clamped to side-correct direction vs markPrice so the exchange doesn't
+     * reject the modify for "SL on wrong side of current price".
+     */
+    _computeBreakevenPrice(position, markPrice) {
+        const fee = this._broker?._takerFeeRate ?? 0.0004;
+        const entry = position.entryPrice;
+        if (!Number.isFinite(entry) || entry <= 0) return null;
+        let be = position.side === 'long'
+            ? entry * (1 + fee) / (1 - fee)
+            : entry * (1 - fee) / (1 + fee);
+        // Safety: if markPrice has moved unfavorably past the fee-adjusted BE,
+        // don't push SL into an already-losing zone — fall back to plain entry.
+        if (Number.isFinite(markPrice)) {
+            if (position.side === 'long' && be >= markPrice) be = entry;
+            if (position.side === 'short' && be <= markPrice) be = entry;
+        }
+        const precision = getAssetPrecision(position.symbol);
+        return Number(be.toFixed(precision.price));
     }
 
     _rowToPosition(r) {
@@ -602,18 +633,27 @@ class PositionManager {
             if (this._broker.mode === 'live' && typeof this._broker.placeTpLadder === 'function' && sizing.takeProfits?.length > 0) {
                 const tp1Pct = (this._config.risk?.tp1ClosePercent || 50) / 100;
                 const tp2Pct = (this._config.risk?.tp2ClosePercent || 30) / 100;
-                const tp3Pct = (this._config.risk?.tp3ClosePercent || 20) / 100;
-                
+
+                // Compute absolute qty per TP so the sum is EXACTLY sizing.quantity.
+                // Round tp1/tp2 normally; tp3 absorbs the remainder so rounding drift
+                // (common when percentages hit a qty step boundary) can't push the
+                // ladder over totalQty and overclose the position.
+                const tp1Price = sizing.takeProfits[0]?.price;
+                const tp2Price = sizing.takeProfits[1]?.price;
+                const tp3Price = sizing.takeProfits[2]?.price;
+
+                const tp1Qty = tp1Price ? roundQty(sizing.quantity * tp1Pct) : 0;
+                const tp2Qty = tp2Price ? roundQty(sizing.quantity * tp2Pct) : 0;
+                // tp3 = remainder. If tp3Price absent, any leftover is forfeit
+                // (the local fallback in _evaluateExits will still close it).
+                const tp3Qty = tp3Price ? Math.max(0, roundQty(sizing.quantity - tp1Qty - tp2Qty)) : 0;
+
                 tpOrderIds = await this._broker.placeTpLadder({
                     symbol,
                     side,
                     totalQty: sizing.quantity,
-                    tp1Price: sizing.takeProfits[0]?.price,
-                    tp2Price: sizing.takeProfits[1]?.price,
-                    tp3Price: sizing.takeProfits[2]?.price,
-                    tp1Pct: roundQty(sizing.quantity * tp1Pct) / sizing.quantity,
-                    tp2Pct: roundQty(sizing.quantity * tp2Pct) / sizing.quantity,
-                    tp3Pct: roundQty(sizing.quantity * tp3Pct) / sizing.quantity
+                    tp1Price, tp2Price, tp3Price,
+                    tp1Qty, tp2Qty, tp3Qty
                 });
                 exchangeTpActive = Boolean(tpOrderIds.tp1OrderId || tpOrderIds.tp2OrderId || tpOrderIds.tp3OrderId);
             }
@@ -810,26 +850,26 @@ class PositionManager {
         });
         this._replace(updated);
 
-        // C8 Phase 2: Move SL to breakeven on exchange if TP1 hit.
+        // C8 Phase 2: Move SL to fee-adjusted breakeven on exchange if TP1 hit.
         // Pass the existing slOrderId so the fallback cancels the specific SL
         // and does NOT wipe the remaining TP ladder (fix C3).
         if (level === 1 && this._broker.mode === 'live') {
             try {
-                // Bug 2 fix: Ensure new SL (entryPrice) is valid relative to markPrice.
-                // For LONG: SL must be < current price. For SHORT: SL must be > current price.
-                // We add a 0.1% buffer to avoid tight reject.
+                const beSl = this._computeBreakevenPrice(position, markPrice);
+                // Validity: SL must stay on the correct side of markPrice with a
+                // small buffer so the exchange doesn't reject the modify.
                 const buffer = markPrice * 0.001;
-                const isLongValid = position.side === 'long' && position.entryPrice < (markPrice - buffer);
-                const isShortValid = position.side === 'short' && position.entryPrice > (markPrice + buffer);
+                const isLongValid = position.side === 'long' && beSl != null && beSl < (markPrice - buffer);
+                const isShortValid = position.side === 'short' && beSl != null && beSl > (markPrice + buffer);
 
                 if (isLongValid || isShortValid) {
-                    logger.info('[PositionManager] Moving SL to breakeven after TP1', {
-                        symbol: position.symbol, entryPrice: position.entryPrice, markPrice
+                    logger.info('[PositionManager] Moving SL to fee-adjusted breakeven after TP1', {
+                        symbol: position.symbol, entryPrice: position.entryPrice, beSl, markPrice
                     });
                     const res = await this._broker.modifySlTp({
                         symbol: position.symbol,
                         orderId: position.slOrderId,
-                        slTriggerPrice: position.entryPrice
+                        slTriggerPrice: beSl
                     });
 
                     // Bug 2 fix: only mark breakeven in DB / memory AFTER exchange
@@ -840,7 +880,7 @@ class PositionManager {
                             .find(x => x.positionId === position.positionId) || updated;
                         const patch = {
                             slMovedToBreakeven: true,
-                            stopLoss: position.entryPrice
+                            stopLoss: beSl
                         };
                         if (res.mode === 'replace' && res.slOrderId) {
                             logger.info('[PositionManager] Updating slOrderId after replace-move', {
@@ -858,7 +898,7 @@ class PositionManager {
                     }
                 } else {
                     logger.warn('[PositionManager] Breakeven move skipped: price too close to entry or already in loss', {
-                        symbol: position.symbol, entryPrice: position.entryPrice, markPrice
+                        symbol: position.symbol, entryPrice: position.entryPrice, beSl, markPrice
                     });
                 }
             } catch (err) {

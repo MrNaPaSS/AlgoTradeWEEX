@@ -414,29 +414,70 @@ class WeexFuturesClient {
      * @param {number} opts.tp3Pct             — fraction of totalQty for TP3 (e.g. 0.2)
      * @returns {Promise<{tp1OrderId:string|null, tp2OrderId:string|null, tp3OrderId:string|null}>}
      */
-    async placeTpLadder({ symbol, side, totalQty, tp1Price, tp2Price, tp3Price, tp1Pct, tp2Pct, tp3Pct }) {
+    async placeTpLadder({ symbol, side, totalQty, tp1Price, tp2Price, tp3Price, tp1Qty, tp2Qty, tp3Qty, tp1Pct, tp2Pct, tp3Pct }) {
         const precision = getAssetPrecision(symbol);
         // For LONG: close via SELL, positionSide=LONG
         // For SHORT: close via BUY, positionSide=SHORT
-        const weexSide = side === 'long' ? SIDE.SELL : SIDE.BUY;
         const weexPositionSide = side === 'long' ? POSITION_SIDE.LONG : POSITION_SIDE.SHORT;
 
-        const levels = [
-            { key: 'tp1', price: tp1Price, pct: tp1Pct },
-            { key: 'tp2', price: tp2Price, pct: tp2Pct },
-            { key: 'tp3', price: tp3Price, pct: tp3Pct }
+        // Accept either absolute qty (preferred — caller guarantees sum ≤ totalQty)
+        // or legacy percent-based args. Percent path recomputes absolute qty with
+        // the LAST present level receiving the remainder so rounding drift can
+        // never overclose the position.
+        let levels = [
+            { key: 'tp1', price: tp1Price, qty: tp1Qty },
+            { key: 'tp2', price: tp2Price, qty: tp2Qty },
+            { key: 'tp3', price: tp3Price, qty: tp3Qty }
         ];
+        const hasAbsoluteQty = levels.some((l) => Number.isFinite(l.qty) && l.qty > 0);
+        if (!hasAbsoluteQty) {
+            const roundQty = (q) => Number(Number(q).toFixed(precision.qty));
+            const pcts = { tp1: tp1Pct, tp2: tp2Pct, tp3: tp3Pct };
+            // Find the LAST level with a valid price — it gets the remainder.
+            const presentKeys = levels
+                .filter((l) => Number.isFinite(l.price) && l.price > 0 && Number.isFinite(pcts[l.key]) && pcts[l.key] > 0)
+                .map((l) => l.key);
+            const lastKey = presentKeys[presentKeys.length - 1] || null;
+
+            let allocated = 0;
+            levels = levels.map((l) => {
+                if (!Number.isFinite(l.price) || l.price <= 0) return l;
+                if (!Number.isFinite(pcts[l.key]) || pcts[l.key] <= 0) return l;
+                let qty;
+                if (l.key === lastKey) {
+                    qty = roundQty(totalQty - allocated);
+                } else {
+                    qty = roundQty(totalQty * pcts[l.key]);
+                    allocated += qty;
+                }
+                return { ...l, qty };
+            });
+        }
 
         const result = { tp1OrderId: null, tp2OrderId: null, tp3OrderId: null };
 
-        for (const { key, price, pct } of levels) {
-            if (!price || !Number.isFinite(price)) continue;
-            
-            const rawQty = totalQty * pct;
-            const qtyStr = rawQty.toFixed(precision.qty);
-            const qty = parseFloat(qtyStr);
+        // Hard guard: sum of absolute qty must not exceed totalQty. Excess can only
+        // happen with buggy callers; clamp the last level rather than overclosing.
+        const qtySum = levels.reduce((s, l) => s + (Number.isFinite(l.qty) ? l.qty : 0), 0);
+        if (qtySum > totalQty + 1e-9) {
+            const overflow = qtySum - totalQty;
+            for (let i = levels.length - 1; i >= 0; i--) {
+                if (Number.isFinite(levels[i].qty) && levels[i].qty > 0) {
+                    const clamped = Math.max(0, levels[i].qty - overflow);
+                    logger.warn('[WeexFutures] placeTpLadder qty sum exceeds totalQty — clamping last level', {
+                        symbol, totalQty, qtySum, level: levels[i].key, was: levels[i].qty, now: clamped
+                    });
+                    levels[i] = { ...levels[i], qty: clamped };
+                    break;
+                }
+            }
+        }
 
-            if (qty <= 0) continue;
+        for (const { key, price, qty } of levels) {
+            if (!price || !Number.isFinite(price)) continue;
+            if (!Number.isFinite(qty) || qty <= 0) continue;
+
+            const qtyStr = qty.toFixed(precision.qty);
 
             try {
                 const clientAlgoId = `tp_${key}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
