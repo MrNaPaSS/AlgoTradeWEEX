@@ -862,16 +862,38 @@ input[type=range].range-slider::-moz-range-thumb {
 
 /* PnL progress bar */
 .pnl-bar {
+    position: relative;
     height: 3px;
     background: rgba(255,255,255,0.06);
     border-radius: 3px;
-    overflow: hidden;
+    margin: 6px 0 14px; /* room beneath for tick labels */
 }
 .pnl-bar-fill {
     height: 100%;
     border-radius: 3px;
     background: linear-gradient(90deg, var(--red) 0%, #FFD700 50%, var(--green) 100%);
     transition: width 0.4s ease;
+}
+.pnl-bar-tick {
+    position: absolute;
+    top: -2px;
+    width: 2px;
+    height: 7px;
+    background: rgba(255,255,255,0.45);
+    transform: translateX(-50%);
+    pointer-events: none;
+}
+.pnl-bar-tick::after {
+    content: attr(data-label);
+    position: absolute;
+    top: 9px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: var(--text-3);
+    white-space: nowrap;
 }
 
 /* Position data grid — 2 rows × 4 columns, compact */

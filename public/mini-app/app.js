@@ -607,11 +607,12 @@
             var sym     = p.symbol.replace('USDT', '');
 
             // Progress bar: how far the MARK price has travelled from SL
-            // (0 %, red end) toward TP1 (100 %, green end).
+            // (0 %, red end) toward the furthest configured TP (100 %, green end).
             // WEEX doesn't return mark price directly, so derive it from
             // entry + unrealized PnL per unit: for LONG  mark ≈ entry + pnl/qty;
             //                                    for SHORT mark ≈ entry − pnl/qty.
             var progress = 50;
+            var ticksHtml = '';
             var qty = Number(p.remainingQuantity);
             var markPrice = null;
             if (Number.isFinite(Number(p.unrealizedPnl)) && Number.isFinite(qty) && qty > 0 && Number.isFinite(p.entryPrice)) {
@@ -619,13 +620,33 @@
                     ? p.entryPrice + Number(p.unrealizedPnl) / qty
                     : p.entryPrice - Number(p.unrealizedPnl) / qty;
             }
-            if (p.stopLoss && p.tp1Price && markPrice != null) {
+            // Pick the furthest TP that's actually set so the bar spans the
+            // whole trade plan instead of stopping at TP1.
+            var tpEnd = p.tp3Price || p.tp2Price || p.tp1Price || null;
+            function barPct(price) {
+                if (!p.stopLoss || !tpEnd || price == null) return null;
                 var pct = isLong
-                    ? (markPrice - p.stopLoss) / (p.tp1Price - p.stopLoss) * 100
-                    : (p.stopLoss - markPrice) / (p.stopLoss - p.tp1Price) * 100;
-                if (Number.isFinite(pct)) {
-                    progress = Math.min(100, Math.max(0, pct));
-                }
+                    ? (price - p.stopLoss) / (tpEnd - p.stopLoss) * 100
+                    : (p.stopLoss - price) / (p.stopLoss - tpEnd) * 100;
+                return Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : null;
+            }
+            var markPct = barPct(markPrice);
+            if (markPct != null) progress = markPct;
+
+            // Vertical tick markers for each TP that exists (TP-end sits at
+            // 100 % so no label needed — the green tail of the gradient
+            // already signals it).
+            [['TP1', p.tp1Price], ['TP2', p.tp2Price], ['TP3', p.tp3Price]].forEach(function (pair) {
+                var label = pair[0], price = pair[1];
+                if (!price || price === tpEnd) return;
+                var pct = barPct(price);
+                if (pct == null) return;
+                ticksHtml += '<span class="pnl-bar-tick" style="left:' + pct.toFixed(1) + '%" data-label="' + label + '"></span>';
+            });
+            // Always label the rightmost TP too, so the user sees which level caps the bar.
+            if (tpEnd && p.stopLoss) {
+                var endLabel = tpEnd === p.tp3Price ? 'TP3' : tpEnd === p.tp2Price ? 'TP2' : 'TP1';
+                ticksHtml += '<span class="pnl-bar-tick" style="left:100%" data-label="' + endLabel + '"></span>';
             }
 
             return '<div class="position-card ' + cls + '" role="listitem">' +
@@ -637,7 +658,7 @@
                     '</div>' +
                     '<span class="pos-pnl ' + pnlCls + '">' + pnlStr + '</span>' +
                 '</div>' +
-                '<div class="pnl-bar"><div class="pnl-bar-fill" style="width:' + progress + '%"></div></div>' +
+                '<div class="pnl-bar"><div class="pnl-bar-fill" style="width:' + progress + '%"></div>' + ticksHtml + '</div>' +
                 '<div class="pos-data">' +
                     // Row 1 — general position info (always 4 cells).
                     '<div class="pos-datum"><span class="pos-datum-label">Вход</span><span class="pos-datum-val">$' + fmt(p.entryPrice, 4) + '</span></div>' +
