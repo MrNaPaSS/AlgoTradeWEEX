@@ -500,8 +500,10 @@
                 balEl.textContent = '—';
             }
 
-            // Stats — cache both scopes, the active one is chosen by the period switch.
-            _statsToday   = data.stats || { totalTrades: 0, winRate: 0, totalPnl: 0 };
+            // Stats — cache all four scopes, the active one is chosen by the period switch.
+            _statsToday   = data.stats        || { totalTrades: 0, winRate: 0, totalPnl: 0 };
+            _stats7d      = data.stats7d      || { totalTrades: 0, winRate: 0, totalPnl: 0 };
+            _stats30d     = data.stats30d     || { totalTrades: 0, winRate: 0, totalPnl: 0 };
             _statsAllTime = data.allTimeStats || { totalTrades: 0, winRate: 0, totalPnl: 0 };
             renderStats();
             var pnl = Number((_statsPeriod === 'today' ? _statsToday : _statsAllTime).totalPnl || 0);
