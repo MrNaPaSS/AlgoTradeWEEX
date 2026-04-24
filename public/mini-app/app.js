@@ -55,7 +55,16 @@
         const container = document.getElementById('toast-container');
         const el = document.createElement('div');
         el.className = `toast toast-${type}`;
-        el.innerHTML = `<span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span><span>${msg}</span>`;
+        // Icon SVG is a safe constant; message is untrusted (error strings from
+        // server/network) — inject icon via innerHTML, message via textContent
+        // to prevent XSS if an error payload ever contains HTML/script.
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'toast-icon';
+        iconSpan.innerHTML = TOAST_ICONS[type] || TOAST_ICONS.info;
+        const msgSpan = document.createElement('span');
+        msgSpan.textContent = msg == null ? '' : String(msg);
+        el.appendChild(iconSpan);
+        el.appendChild(msgSpan);
         container.appendChild(el);
 
         const dismiss = function () {
@@ -582,6 +591,19 @@
         return Number.isFinite(n) ? n.toFixed(d != null ? d : 2) : '—';
     }
 
+    // Escape HTML special chars — used when embedding server-supplied strings
+    // (e.g. position symbol) into innerHTML templates. Prevents XSS if the
+    // backend ever leaks untrusted data into those fields.
+    function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function renderPositions(list) {
         var el = document.getElementById('positions-list');
         if (!list.length) {
@@ -606,8 +628,8 @@
             var pnlCls  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
             var pnlSign = pnl >= 0 ? '+' : '−'; // always show sign for clarity
             var pnlStr  = pnlSign + '$' + Math.abs(pnl).toFixed(2);
-            var lev     = p.leverage ? p.leverage + '×' : '';
-            var sym     = p.symbol.replace('USDT', '');
+            var lev     = p.leverage ? escapeHtml(p.leverage) + '×' : '';
+            var sym     = escapeHtml(String(p.symbol || '').replace('USDT', ''));
 
             // Progress bar: how far the MARK price has travelled from SL
             // (0 %, red end) toward the furthest configured TP (100 %, green end).
@@ -691,10 +713,14 @@
         haptic('medium');
         var btn = document.getElementById('btn-pause-resume');
         btn.disabled = true;
+        // Capture intent BEFORE api + refresh. Previously we read _paused
+        // after refresh() had already flipped it → toast showed the opposite
+        // of what just happened.
+        var wasPaused = _paused;
         try {
-            await api('POST', _paused ? '/me/resume' : '/me/pause');
+            await api('POST', wasPaused ? '/me/resume' : '/me/pause');
             await refresh();
-            toast(_paused ? 'Торговля возобновлена' : 'Торговля приостановлена', 'info');
+            toast(wasPaused ? 'Торговля возобновлена' : 'Торговля приостановлена', 'info');
         } catch (err) {
             hapticNotify('error');
             toast(err.message || 'Ошибка', 'err');

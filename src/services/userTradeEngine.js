@@ -127,63 +127,64 @@ class UserTradeEngine {
             return [];
         }
 
-        const results = [];
         const symbol = decision.symbol;
         const direction = decision.direction;
 
-        for (const [userId, engine] of this._engines) {
-            try {
-                // Check if user has this symbol enabled
-                const userSymbols = engine.symbols || [];
-                if (userSymbols.length > 0 && !userSymbols.includes(symbol)) {
-                    results.push({ userId, success: false, reason: 'symbol_not_enabled' });
-                    continue;
-                }
-
-                // Per-user risk evaluation
-                const riskResult = await engine.riskGuard.evaluate({ symbol, direction });
-                if (!riskResult.allow) {
-                    logger.info('[UserTradeEngine] user blocked by risk', {
-                        userId, symbol, reason: riskResult.reason
-                    });
-                    results.push({ userId, success: false, reason: riskResult.reason });
-                    continue;
-                }
-
-                // Compute per-user sizing
-                const sizing = this._computeUserSizing(engine, snapshot, direction, riskResult);
-                if (!sizing) {
-                    results.push({ userId, success: false, reason: 'sizing_failed' });
-                    continue;
-                }
-
-                const markPrice = snapshot.indicators?.close
-                    ?? snapshot.candles?.[snapshot.candles.length - 1]?.close;
-
-                // Open position on user's exchange account
-                const position = await engine.positionManager.open({
-                    symbol,
-                    direction,
-                    markPrice,
-                    sizing,
-                    decisionId: decision.id
-                });
-
-                if (position) {
-                    results.push({ userId, success: true, positionId: position.positionId });
-                    // Notify THIS user specifically
-                    this._telegram.notifyPositionOpened?.(position, engine.chatId).catch(() => {});
-                } else {
-                    results.push({ userId, success: false, reason: 'position_open_returned_null' });
-                }
-            } catch (err) {
-                // ISOLATION: one user's error never blocks others
-                logger.error('[UserTradeEngine] fanOut error for user', {
-                    userId, symbol, message: err.message
-                });
-                results.push({ userId, success: false, reason: err.message });
+        // Per-user work is fully independent (different exchange accounts,
+        // different risk state). Run in parallel so a slow user's REST call
+        // doesn't delay everyone else. Promise.allSettled guarantees one
+        // user's rejection never blocks the rest.
+        const entries = Array.from(this._engines.entries());
+        const settled = await Promise.allSettled(entries.map(async ([userId, engine]) => {
+            // Check if user has this symbol enabled
+            const userSymbols = engine.symbols || [];
+            if (userSymbols.length > 0 && !userSymbols.includes(symbol)) {
+                return { userId, success: false, reason: 'symbol_not_enabled' };
             }
-        }
+
+            // Per-user risk evaluation
+            const riskResult = await engine.riskGuard.evaluate({ symbol, direction });
+            if (!riskResult.allow) {
+                logger.info('[UserTradeEngine] user blocked by risk', {
+                    userId, symbol, reason: riskResult.reason
+                });
+                return { userId, success: false, reason: riskResult.reason };
+            }
+
+            // Compute per-user sizing
+            const sizing = this._computeUserSizing(engine, snapshot, direction, riskResult);
+            if (!sizing) {
+                return { userId, success: false, reason: 'sizing_failed' };
+            }
+
+            const markPrice = snapshot.indicators?.close
+                ?? snapshot.candles?.[snapshot.candles.length - 1]?.close;
+
+            // Open position on user's exchange account
+            const position = await engine.positionManager.open({
+                symbol,
+                direction,
+                markPrice,
+                sizing,
+                decisionId: decision.id
+            });
+
+            if (position) {
+                // Notify THIS user specifically
+                this._telegram.notifyPositionOpened?.(position, engine.chatId).catch(() => {});
+                return { userId, success: true, positionId: position.positionId };
+            }
+            return { userId, success: false, reason: 'position_open_returned_null' };
+        }));
+
+        const results = settled.map((s, i) => {
+            if (s.status === 'fulfilled') return s.value;
+            const [userId] = entries[i];
+            logger.error('[UserTradeEngine] fanOut error for user', {
+                userId, symbol, message: s.reason?.message || String(s.reason)
+            });
+            return { userId, success: false, reason: s.reason?.message || 'unknown_error' };
+        });
 
         logger.info('[UserTradeEngine] fanOut complete', {
             symbol, direction,
@@ -226,12 +227,19 @@ class UserTradeEngine {
      * Dispatch mark price to all user engines that have positions on this symbol.
      */
     async onMarkPrice(symbol, price) {
-        for (const [userId, engine] of this._engines) {
-            try {
-                await engine.positionManager.onMarkPrice(symbol, price);
-            } catch (err) {
+        // Fan out in parallel — each PM's onMarkPrice is independent, and
+        // mark-price ticks arrive at high frequency. Serial awaits would let
+        // one slow user's exit check stall SL/TP evaluation for everyone else.
+        const entries = Array.from(this._engines.entries());
+        const settled = await Promise.allSettled(
+            entries.map(([, engine]) => engine.positionManager.onMarkPrice(symbol, price))
+        );
+        for (let i = 0; i < settled.length; i++) {
+            if (settled[i].status === 'rejected') {
+                const [userId] = entries[i];
                 logger.debug('[UserTradeEngine] onMarkPrice error', {
-                    userId, symbol, message: err.message
+                    userId, symbol,
+                    message: settled[i].reason?.message || String(settled[i].reason)
                 });
             }
         }
