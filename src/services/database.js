@@ -350,6 +350,25 @@ class Database {
         );
     }
 
+    /**
+     * Orphan positions = rows with user_id IS NULL. These are legacy single-user
+     * trades opened before Mini App multi-user mode. The master PositionManager
+     * (running on WEEX_API_KEY from .env, not tied to any Mini App user) manages
+     * ONLY these rows — new trades for connected users are owned by their
+     * per-user PositionManager and always carry a non-null user_id.
+     */
+    async getOrphanOpenPositions(symbol) {
+        if (symbol) {
+            return this.all(
+                `SELECT * FROM positions WHERE symbol=? AND user_id IS NULL AND status IN ('OPEN','PARTIAL') ORDER BY opened_at ASC`,
+                [symbol]
+            );
+        }
+        return this.all(
+            `SELECT * FROM positions WHERE user_id IS NULL AND status IN ('OPEN','PARTIAL') ORDER BY opened_at ASC`
+        );
+    }
+
     async insertPartialClose(pc) {
         await this.run(
             `INSERT INTO partial_closes (position_id, tp_level, price, quantity, pnl, order_id, closed_at)

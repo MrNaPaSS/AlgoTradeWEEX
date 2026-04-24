@@ -46,8 +46,12 @@ class TradingOrchestrator {
         this._userTradeEngine = userTradeEngine || null;
 
         // Периодическая синхронизация с биржей (раз в 30 секунд)
+        // Пропускаем для master PM в мультиюзер-режиме — master работает только
+        // с orphan-позициями (user_id IS NULL), биржевой аккаунт принадлежит
+        // одному из mini-app юзеров, синк только испортит скоуп.
         this._syncInterval = null;
-        if (this._pm && this._pm.syncWithExchange) {
+        const pmHasUserId = this._pm && this._pm._userId;
+        if (this._pm && this._pm.syncWithExchange && pmHasUserId) {
             this._syncInterval = setInterval(() => {
                 this._pm.syncWithExchange().catch((err) => {
                     logger.warn('[Orchestrator] periodic sync failed', { error: err.message });
@@ -191,16 +195,32 @@ class TradingOrchestrator {
         }
 
         // 1. Master user (from .env) trades via original pipeline
-        const position = await this._pm.open({
-            symbol,
-            direction: decision.direction,
-            markPrice,
-            sizing: finalSizing,
-            decisionId: decision.id
-        });
+        //    В мультиюзер-режиме биржевой аккаунт уже принадлежит одному
+        //    из mini-app юзеров → master.open() дублировал бы сделку.
+        //    Подчиняем master: открываем только если подключённых юзеров нет.
+        const hasActiveUsers = !!(
+            this._userTradeEngine &&
+            typeof this._userTradeEngine.getAllActiveUserIds === 'function' &&
+            this._userTradeEngine.getAllActiveUserIds().length > 0
+        );
 
-        if (position) {
-            this._onEvent('positionExecuted', { decision, position });
+        let position = null;
+        if (!hasActiveUsers) {
+            position = await this._pm.open({
+                symbol,
+                direction: decision.direction,
+                markPrice,
+                sizing: finalSizing,
+                decisionId: decision.id
+            });
+
+            if (position) {
+                this._onEvent('positionExecuted', { decision, position });
+            }
+        } else {
+            logger.info('[Orchestrator] master PM open skipped — mini-app users present (fan-out only)', {
+                symbol, decisionId: decision.id
+            });
         }
 
         // 2. Fan-out to all connected mini-app users

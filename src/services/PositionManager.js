@@ -67,11 +67,21 @@ class PositionManager {
 
     async _hydrate() {
         this._positions.clear();
-        const rows = await this._db.getOpenPositions(undefined, this._userId);
+        // Master PM (no userId) hydrates only legacy orphan rows (user_id IS NULL).
+        // This prevents it from picking up positions owned by Mini-App users,
+        // which would cause duplicated onMarkPrice / TP-polling and let master
+        // accidentally close user positions via its own broker keys.
+        const rows = this._userId
+            ? await this._db.getOpenPositions(undefined, this._userId)
+            : await this._db.getOrphanOpenPositions();
         for (const r of rows) {
             this._push(this._rowToPosition(r));
         }
-        logger.info('[PositionManager] hydrated from DB', { count: rows.length, userId: this._userId });
+        logger.info('[PositionManager] hydrated from DB', {
+            count: rows.length,
+            userId: this._userId,
+            scope: this._userId ? 'user' : 'orphan-only'
+        });
     }
 
     /**
@@ -80,6 +90,15 @@ class PositionManager {
      * has active SL orders on the exchange. If so, restore slOrderId and exchangeSlActive.
      */
     async syncWithExchange() {
+        // Master PM (no userId) must not reconcile with the exchange: the
+        // exchange view belongs to the WEEX account behind the bot's .env keys,
+        // which in multi-user mode is owned by one of the Mini-App users — not
+        // by "master". Reconciling would grab that user's live positions into
+        // the orphan scope and let master fight the per-user PM for control.
+        if (!this._userId) {
+            logger.debug('[PositionManager] syncWithExchange skipped (master scope: orphan-only)');
+            return;
+        }
         try {
             await this.hydrated;
             const remotePositions = await this._broker.getOpenPositions();
