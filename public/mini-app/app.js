@@ -236,8 +236,18 @@
         document.querySelectorAll('.nav-btn').forEach(function (b) {
             b.classList.toggle('active', b.dataset.screen === name);
         });
-        if (name === 'dashboard') startRefresh();
-        else stopRefresh();
+        if (name === 'dashboard') {
+            startRefresh();
+        } else {
+            stopRefresh();
+            // On the API screen the "connected" card shows balance + position
+            // count — trigger one immediate refresh so the user doesn't stare
+            // at stale numbers (or skeletons) while waiting for the next
+            // dashboard visit.
+            if (name === 'api' && _hasKeys) {
+                refresh().catch(function () { /* surfaced inside refresh */ });
+            }
+        }
     }
 
     // ── Slider fill ───────────────────────────────────────────────────────────
