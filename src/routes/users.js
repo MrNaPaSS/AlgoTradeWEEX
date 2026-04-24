@@ -110,6 +110,8 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                 username: user.username,
                 isActive: Boolean(user.is_active),
                 hasKeys: Boolean(user.encrypted_api_key),
+                paused: Boolean(user.risk_paused),
+                pauseReason: user.risk_pause_reason || null,
                 risk: {
                     maxDailyLossPct: user.risk_max_daily_loss_pct,
                     maxPositions: user.risk_max_positions,

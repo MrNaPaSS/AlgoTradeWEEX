@@ -97,9 +97,18 @@ class UserTradeEngine {
             getAvailableBalanceUsd: () => engine.broker.getAvailableBalanceUsd(),
             getOpenPositions: () => engine.positionManager.getOpen(),
             database: this._db,
-            userId
+            userId,
+            persistPause: ({ paused, reason }) => this._db.updateUser(userId, {
+                risk_paused: paused ? 1 : 0,
+                risk_pause_reason: reason ?? null
+            })
         });
-        await newRiskGuard.init();
+        // Pass through the currently persisted paused flag so the kill-switch
+        // survives a settings update.
+        await newRiskGuard.init({
+            paused: Boolean(riskSettings?.risk_paused),
+            pauseReason: riskSettings?.risk_pause_reason || null
+        });
 
         engine.riskGuard = newRiskGuard;
         engine.positionManager._riskGuard = newRiskGuard;
@@ -266,9 +275,16 @@ class UserTradeEngine {
             getAvailableBalanceUsd: () => broker.getAvailableBalanceUsd(),
             getOpenPositions: () => positionManager.getOpen(),
             database: this._db,
-            userId: row.user_id
+            userId: row.user_id,
+            persistPause: ({ paused, reason }) => this._db.updateUser(row.user_id, {
+                risk_paused: paused ? 1 : 0,
+                risk_pause_reason: reason ?? null
+            })
         });
-        await riskGuard.init();
+        await riskGuard.init({
+            paused: Boolean(row.risk_paused),
+            pauseReason: row.risk_pause_reason || null
+        });
 
         const positionManager = new PositionManager({
             database: this._db,

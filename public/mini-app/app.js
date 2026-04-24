@@ -414,6 +414,9 @@
             if (results[0].success && results[1].success) {
                 hapticNotify('success');
                 toast('Настройки сохранены', 'ok');
+                // Refresh settings screen from server so sliders reflect the
+                // canonical (validated/clamped) values, not the stale inputs.
+                try { await loadSettings(); } catch (_) { /* non-fatal */ }
             } else {
                 throw new Error(results[0].error || results[1].error || 'Ошибка');
             }

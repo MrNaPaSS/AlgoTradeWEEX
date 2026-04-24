@@ -4,7 +4,7 @@ const initSqlJs = require('sql.js');
 const logger = require('../utils/logger');
 
 const DB_PATH = path.join(__dirname, '..', '..', 'data', 'trades.db');
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS users (
     risk_max_positions INTEGER DEFAULT 3,
     risk_leverage INTEGER DEFAULT 5,
     risk_position_size_pct REAL DEFAULT 5,
+    risk_paused INTEGER DEFAULT 0,
+    risk_pause_reason TEXT,
     symbols TEXT DEFAULT 'BTCUSDT,ETHUSDT',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -206,6 +208,37 @@ class Database {
             } catch (err) {
                 if (!/duplicate column/i.test(err.message)) {
                     logger.error('[Database] migration v5 failed', { message: err.message });
+                    throw err;
+                }
+            }
+        }
+
+        // v6: users.risk_paused — persisted pause flag so kill-switch state survives restarts
+        const userCols = new Set();
+        const ures = this._db.exec('PRAGMA table_info(users)');
+        if (ures[0] && ures[0].values) {
+            for (const row of ures[0].values) userCols.add(row[1]);
+        }
+        if (!userCols.has('risk_paused')) {
+            try {
+                this._db.run('ALTER TABLE users ADD COLUMN risk_paused INTEGER DEFAULT 0');
+                this._markDirty();
+                logger.info('[Database] migration v6: added users.risk_paused');
+            } catch (err) {
+                if (!/duplicate column/i.test(err.message)) {
+                    logger.error('[Database] migration v6 failed', { message: err.message });
+                    throw err;
+                }
+            }
+        }
+        if (!userCols.has('risk_pause_reason')) {
+            try {
+                this._db.run('ALTER TABLE users ADD COLUMN risk_pause_reason TEXT');
+                this._markDirty();
+                logger.info('[Database] migration v6: added users.risk_pause_reason');
+            } catch (err) {
+                if (!/duplicate column/i.test(err.message)) {
+                    logger.error('[Database] migration v6 (reason) failed', { message: err.message });
                     throw err;
                 }
             }
@@ -431,14 +464,19 @@ class Database {
         };
     }
 
-    async debugUpdatePosition(symbol, fields) {
-        const positions = (await this.getOpenPositions()).filter(p => p.symbol === symbol);
+    async debugUpdatePosition(symbol, fields, userId) {
+        if (!userId) {
+            // Hard-fail instead of silently clobbering every user's open position
+            // on a shared symbol. Callers must pass the owning userId.
+            throw new Error('debugUpdatePosition requires userId');
+        }
+        const positions = (await this.getOpenPositions(symbol, userId));
         for (const p of positions) {
             const setClause = Object.keys(fields).map(k => `${k} = ?`).join(', ');
             const values = Object.values(fields);
             this._db.run(`UPDATE positions SET ${setClause} WHERE position_id = ?`, [...values, p.position_id]);
         }
-        this._persistIfDirty();
+        this._markDirty();
     }
 
     // ─── User CRUD (multi-user) ──────────────────────────────────────────
@@ -480,7 +518,8 @@ class Database {
         const allowed = [
             'encrypted_api_key', 'encrypted_secret', 'encrypted_passphrase',
             'is_active', 'risk_max_daily_loss_pct', 'risk_max_positions',
-            'risk_leverage', 'risk_position_size_pct', 'symbols', 'username'
+            'risk_leverage', 'risk_position_size_pct', 'risk_paused',
+            'risk_pause_reason', 'symbols', 'username'
         ];
         const updates = [];
         const values = [];

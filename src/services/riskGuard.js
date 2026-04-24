@@ -23,7 +23,7 @@ class RiskGuard {
      * @param {Function} [opts.onEvent]  Callback for risk events (paused, resumed, etc.)
      * @param {Object} [opts.metrics]   Prometheus metrics object
      */
-    constructor({ config, getAvailableBalanceUsd, getOpenPositions, database, onEvent, metrics, userId } = {}) {
+    constructor({ config, getAvailableBalanceUsd, getOpenPositions, database, onEvent, metrics, userId, persistPause } = {}) {
         this._config = config;
         this._balanceFn = getAvailableBalanceUsd;
         this._positionsFn = getOpenPositions;
@@ -31,6 +31,9 @@ class RiskGuard {
         this._onEvent = onEvent || null;
         this._metrics = metrics || null;
         this._userId = userId || null;
+        // Optional async hook: ({ paused, reason }) => Promise<void>
+        // Used to persist the kill-switch flag per user (e.g. users.risk_paused column).
+        this._persistPause = typeof persistPause === 'function' ? persistPause : null;
 
         this._paused = false;
         this._pauseReason = null;
@@ -38,11 +41,18 @@ class RiskGuard {
         this._realisedPnlUsd = 0;
         this._startOfDayBalance = null;
 
-        // Per-user KV key prefix
+        // Per-user KV key — avoids colliding state across users when DB is shared.
+        // Fallback key `riskGuard:state` is only used when userId is absent (single-tenant dev mode).
         this._kvKey = this._userId ? `riskGuard:${this._userId}:state` : 'riskGuard:state';
     }
 
-    async init() {
+    async init({ paused = false, pauseReason = null } = {}) {
+        // Restore persisted kill-switch flag first
+        if (paused) {
+            this._paused = true;
+            this._pauseReason = pauseReason || 'restored';
+            logger.info('[RiskGuard] restored paused state', { userId: this._userId, reason: this._pauseReason });
+        }
         if (!this._db) return;
         try {
             const snap = await this._db.kvGet(this._kvKey);
@@ -55,7 +65,12 @@ class RiskGuard {
             logger.warn('[RiskGuard] failed to load persisted state', { message: err.message });
         }
         if (this._startOfDayBalance === null) {
-            this._startOfDayBalance = await this._balanceFn();
+            try {
+                this._startOfDayBalance = await this._balanceFn();
+            } catch (err) {
+                logger.warn('[RiskGuard] init balance fetch failed', { message: err.message });
+                this._startOfDayBalance = 0;
+            }
             await this._flush();
         }
     }
@@ -64,8 +79,12 @@ class RiskGuard {
         if (this._paused && this._pauseReason === reason) return;
         this._paused = true;
         this._pauseReason = reason;
-        logger.warn('[RiskGuard] trading paused', { reason });
-        
+        logger.warn('[RiskGuard] trading paused', { userId: this._userId, reason });
+
+        if (this._persistPause) {
+            Promise.resolve(this._persistPause({ paused: true, reason }))
+                .catch((err) => logger.warn('[RiskGuard] persistPause failed', { message: err.message }));
+        }
         if (this._onEvent) this._onEvent('paused', { reason });
         if (this._metrics?.riskPausesTotal) {
             this._metrics.riskPausesTotal.labels(reason).inc();
@@ -76,7 +95,11 @@ class RiskGuard {
         if (!this._paused) return;
         this._paused = false;
         this._pauseReason = null;
-        logger.info('[RiskGuard] trading resumed');
+        logger.info('[RiskGuard] trading resumed', { userId: this._userId });
+        if (this._persistPause) {
+            Promise.resolve(this._persistPause({ paused: false, reason: null }))
+                .catch((err) => logger.warn('[RiskGuard] persistPause failed', { message: err.message }));
+        }
         if (this._onEvent) this._onEvent('resumed', {});
     }
 

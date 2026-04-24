@@ -155,11 +155,22 @@ class PositionManager {
                         stopLoss,
                         slOrderId,
                         exchangeSlActive: Boolean(stopLoss && this._broker.mode === 'live'),
-                        mode: this._broker.mode
+                        mode: this._broker.mode,
+                        userId: this._userId
                     });
                     this._push(pos);
-                    // Note: we don't insert into DB here as it might be a temporary sync object.
-                    // Real trades should already be in DB or will be synced back.
+                    // Persist to DB with the owning userId so stats, /me/status,
+                    // and subsequent rehydrations all see this position under
+                    // the correct user. Previously this was skipped, which
+                    // caused orphan positions (user_id=NULL) that the Mini App
+                    // filtered out.
+                    try {
+                        await this._db.insertPosition(pos);
+                    } catch (err) {
+                        logger.warn('[PositionManager] failed to persist synced position', {
+                            symbol: p.symbol, side: p.side, userId: this._userId, message: err.message
+                        });
+                    }
                 }
             }
 
