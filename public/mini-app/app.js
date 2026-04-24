@@ -606,11 +606,25 @@
             var lev     = p.leverage ? p.leverage + '×' : '';
             var sym     = p.symbol.replace('USDT', '');
 
+            // Progress bar: how far the MARK price has travelled from SL
+            // (0 %, red end) toward TP1 (100 %, green end).
+            // WEEX doesn't return mark price directly, so derive it from
+            // entry + unrealized PnL per unit: for LONG  mark ≈ entry + pnl/qty;
+            //                                    for SHORT mark ≈ entry − pnl/qty.
             var progress = 50;
-            if (p.stopLoss && p.tp1Price && p.entryPrice) {
-                var range = Math.abs(p.tp1Price - p.stopLoss);
-                if (range > 0) {
-                    progress = Math.min(100, Math.max(0, (Math.abs(p.entryPrice - p.stopLoss) / range) * 100));
+            var qty = Number(p.remainingQuantity);
+            var markPrice = null;
+            if (Number.isFinite(Number(p.unrealizedPnl)) && Number.isFinite(qty) && qty > 0 && Number.isFinite(p.entryPrice)) {
+                markPrice = isLong
+                    ? p.entryPrice + Number(p.unrealizedPnl) / qty
+                    : p.entryPrice - Number(p.unrealizedPnl) / qty;
+            }
+            if (p.stopLoss && p.tp1Price && markPrice != null) {
+                var pct = isLong
+                    ? (markPrice - p.stopLoss) / (p.tp1Price - p.stopLoss) * 100
+                    : (p.stopLoss - markPrice) / (p.stopLoss - p.tp1Price) * 100;
+                if (Number.isFinite(pct)) {
+                    progress = Math.min(100, Math.max(0, pct));
                 }
             }
 
