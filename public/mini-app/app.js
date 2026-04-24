@@ -615,14 +615,16 @@
                 '</div>' +
                 '<div class="pnl-bar"><div class="pnl-bar-fill" style="width:' + progress + '%"></div></div>' +
                 '<div class="pos-data">' +
+                    // Row 1 — general position info (always 4 cells).
                     '<div class="pos-datum"><span class="pos-datum-label">Вход</span><span class="pos-datum-val">$' + fmt(p.entryPrice, 4) + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">Объём</span><span class="pos-datum-val">' + fmt(p.remainingQuantity, 4) + '</span></div>' +
-                    (p.stopLoss ? '<div class="pos-datum"><span class="pos-datum-label">Stop Loss' + (p.slMovedToBreakeven ? ' · б/у' : '') + '</span><span class="pos-datum-val val-sl">$' + fmt(p.stopLoss, 4) + '</span></div>' : '') +
-                    (p.tp1Price ? '<div class="pos-datum"><span class="pos-datum-label">TP1</span><span class="pos-datum-val val-tp">$' + fmt(p.tp1Price, 4) + '</span></div>' : '') +
-                    (p.tp2Price ? '<div class="pos-datum"><span class="pos-datum-label">TP2</span><span class="pos-datum-val val-tp">$' + fmt(p.tp2Price, 4) + '</span></div>' : '') +
-                    (p.tp3Price ? '<div class="pos-datum"><span class="pos-datum-label">TP3</span><span class="pos-datum-val val-tp">$' + fmt(p.tp3Price, 4) + '</span></div>' : '') +
-                    (p.liquidatePrice ? '<div class="pos-datum"><span class="pos-datum-label">Ликвидация</span><span class="pos-datum-val val-sl">$' + fmt(p.liquidatePrice, 4) + '</span></div>' : '') +
-                    (p.marginSize ? '<div class="pos-datum"><span class="pos-datum-label">Маржа</span><span class="pos-datum-val">$' + fmt(p.marginSize, 2) + '</span></div>' : '') +
+                    '<div class="pos-datum"><span class="pos-datum-label">Ликвид.</span><span class="pos-datum-val val-sl">' + (p.liquidatePrice ? '$' + fmt(p.liquidatePrice, 4) : '—') + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">Маржа</span><span class="pos-datum-val">' + (p.marginSize ? '$' + fmt(p.marginSize, 2) : '—') + '</span></div>' +
+                    // Row 2 — Stop Loss + three take-profit levels (always 4 cells).
+                    '<div class="pos-datum"><span class="pos-datum-label">SL' + (p.slMovedToBreakeven ? '·б/у' : '') + '</span><span class="pos-datum-val val-sl">' + (p.stopLoss ? '$' + fmt(p.stopLoss, 4) : '—') + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">TP1</span><span class="pos-datum-val val-tp">' + (p.tp1Price ? '$' + fmt(p.tp1Price, 4) : '—') + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">TP2</span><span class="pos-datum-val val-tp">' + (p.tp2Price ? '$' + fmt(p.tp2Price, 4) : '—') + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">TP3</span><span class="pos-datum-val val-tp">' + (p.tp3Price ? '$' + fmt(p.tp3Price, 4) : '—') + '</span></div>' +
                 '</div>' +
                 '</div>';
         }).join('');

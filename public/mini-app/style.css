@@ -874,25 +874,28 @@ input[type=range].range-slider::-moz-range-thumb {
     transition: width 0.4s ease;
 }
 
-/* Position data grid */
+/* Position data grid — 2 rows × 4 columns, compact */
 .pos-data {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px 10px;
 }
-.pos-datum { display: flex; flex-direction: column; gap: 3px; }
+.pos-datum { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pos-datum-label {
-    font-size: 9.5px;
+    font-size: 8.5px;
     font-weight: 600;
     letter-spacing: 0.4px;
     text-transform: uppercase;
     color: var(--text-3);
 }
 .pos-datum-val {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .val-sl { color: var(--red) !important; }
 .val-tp { color: var(--green) !important; }
