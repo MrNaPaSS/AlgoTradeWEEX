@@ -1,7 +1,11 @@
 const { Mutex } = require('async-mutex');
 const { createPosition, updatePosition, computeUnrealizedPnl } = require('../domain/Position');
-const { getAssetPrecision } = require('../config/assets');
+const { getAssetPrecision, floorToStep } = require('../config/assets');
 const logger = require('../utils/logger');
+// Prometheus metrics are a process-wide singleton — import directly instead
+// of plumbing through DI so per-user PMs don't all need a separate wiring.
+let _metricsRef = null;
+try { _metricsRef = require('../routes/metrics').metrics; } catch { /* metrics optional */ }
 
 /**
  * C8 Phase 1: detect "position already closed" races. When exchange-side SL
@@ -238,8 +242,9 @@ class PositionManager {
 
         for (const p of openPos) {
             if (!p.exchangeTpActive) continue;
-            
-            await this._lock(p.symbol).runExclusive(async () => {
+
+            try {
+                await this._lock(p.symbol).runExclusive(async () => {
                 // Re-fetch between each TP check — _checkTpFill mutates in-memory
                 // and DB state. Without refreshing, status/order-id gates for TP2/TP3
                 // see stale values from before TP1 was consumed.
@@ -256,12 +261,21 @@ class PositionManager {
                     await this._checkTpFill(current, 2, current.tp2OrderId, 0.6);
                 }
 
-                current = latest();
-                if (!current || current.status === 'CLOSED') return;
-                if (current.tp3OrderId && current.status === 'PARTIAL') {
-                    await this._checkTpFill(current, 3, current.tp3OrderId, 1.0);
-                }
-            });
+                    current = latest();
+                    if (!current || current.status === 'CLOSED') return;
+                    if (current.tp3OrderId && current.status === 'PARTIAL') {
+                        await this._checkTpFill(current, 3, current.tp3OrderId, 1.0);
+                    }
+                });
+            } catch (err) {
+                // Don't let one symbol's failure kill the poll loop for others.
+                logger.warn('[PositionManager] TP poll iteration failed', {
+                    userId: this._userId, symbol: p.symbol, message: err.message
+                });
+                _metricsRef?.tpPollErrorsTotal?.labels(
+                    String(this._userId || 'master'), p.symbol, 'iteration'
+                ).inc();
+            }
         }
     }
 
@@ -454,6 +468,9 @@ class PositionManager {
             }
         } catch (err) {
             logger.debug(`[PositionManager] checkTpFill failed`, { orderId, message: err.message });
+            try {
+                _metricsRef?.tpPollErrorsTotal?.labels(String(this._userId || 'master'), 'unknown', 'checkfill').inc();
+            } catch (_) { /* noop */ }
         }
     }
 
@@ -752,28 +769,11 @@ class PositionManager {
     }
 
     async _partialClose(position, markPrice, level, fractionOfRemaining) {
-        // Get symbol-specific step size for correct rounding
-        const stepSizeMap = {
-            'BTCUSDT': 0.001,
-            'ETHUSDT': 0.001,
-            'SOLUSDT': 0.1,
-            'BNBUSDT': 0.01,
-            'XRPUSDT': 1,
-            'ADAUSDT': 10,
-            'XAUTUSDT': 0.01
-        };
-        const stepSize = stepSizeMap[position.symbol] || 0.001;
-        
-        let closeQty;
+        // C9: single source of truth for qty step is config/assets.js now.
+        // Floor to step so partial close can never exceed the open position.
         const rawQty = position.remainingQuantity * fractionOfRemaining;
-        if (stepSize >= 1) {
-            closeQty = Math.floor(rawQty / stepSize) * stepSize;
-        } else {
-            const precision = Math.log10(1/stepSize);
-            const factor = Math.pow(10, precision);
-            closeQty = Math.floor(rawQty * factor) / factor;
-        }
-        
+        const closeQty = floorToStep(position.symbol, rawQty);
+
         if (closeQty <= 0) return;
         
         let fill;

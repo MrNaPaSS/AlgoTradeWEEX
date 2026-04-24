@@ -34,6 +34,11 @@ class RiskGuard {
         // Optional async hook: ({ paused, reason }) => Promise<void>
         // Used to persist the kill-switch flag per user (e.g. users.risk_paused column).
         this._persistPause = typeof persistPause === 'function' ? persistPause : null;
+        // Serialize persist writes: rapid pause/resume toggles (manual toggle
+        // colliding with auto daily-loss trigger) would race otherwise and
+        // leave DB out of sync with in-memory state. The chain guarantees the
+        // LAST enqueued write wins, matching the in-memory ordering.
+        this._persistChain = Promise.resolve();
 
         this._paused = false;
         this._pauseReason = null;
@@ -81,10 +86,7 @@ class RiskGuard {
         this._pauseReason = reason;
         logger.warn('[RiskGuard] trading paused', { userId: this._userId, reason });
 
-        if (this._persistPause) {
-            Promise.resolve(this._persistPause({ paused: true, reason }))
-                .catch((err) => logger.warn('[RiskGuard] persistPause failed', { message: err.message }));
-        }
+        this._enqueuePersist({ paused: true, reason });
         if (this._onEvent) this._onEvent('paused', { reason });
         if (this._metrics?.riskPausesTotal) {
             this._metrics.riskPausesTotal.labels(reason).inc();
@@ -96,11 +98,22 @@ class RiskGuard {
         this._paused = false;
         this._pauseReason = null;
         logger.info('[RiskGuard] trading resumed', { userId: this._userId });
-        if (this._persistPause) {
-            Promise.resolve(this._persistPause({ paused: false, reason: null }))
-                .catch((err) => logger.warn('[RiskGuard] persistPause failed', { message: err.message }));
-        }
+        this._enqueuePersist({ paused: false, reason: null });
         if (this._onEvent) this._onEvent('resumed', {});
+    }
+
+    /**
+     * Enqueue a persistence write on a serial promise chain. Chain absorbs
+     * errors so a failed write never poisons subsequent ones.
+     * @param {{paused:boolean, reason:string|null}} state
+     */
+    _enqueuePersist(state) {
+        if (!this._persistPause) return;
+        this._persistChain = this._persistChain
+            .then(() => this._persistPause(state))
+            .catch((err) => logger.warn('[RiskGuard] persistPause failed', {
+                userId: this._userId, paused: state.paused, message: err.message
+            }));
     }
 
     get isPaused() {

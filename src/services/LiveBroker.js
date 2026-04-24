@@ -1,6 +1,10 @@
 const logger = require('../utils/logger');
 const { SIDE, POSITION_SIDE, ORDER_TYPE } = require('../api/weex/endpoints');
 
+// Prometheus metrics (lazy — avoid circular require during initial module loading).
+let _metricsRef = null;
+try { _metricsRef = require('../routes/metrics').metrics; } catch (_) { /* optional */ }
+
 /**
  * LiveBroker — adapter around WeexFuturesClient exposing the same
  * surface as PaperBroker so TradingOrchestrator is mode-agnostic.
@@ -10,9 +14,10 @@ class LiveBroker {
      * @param {Object} opts
      * @param {import('../api/weex/WeexFuturesClient').WeexFuturesClient} opts.client
      */
-    constructor({ client, takerFeeRate = 0.0004, balanceStaleThreshold = 3 } = {}) {
+    constructor({ client, takerFeeRate = 0.0004, balanceStaleThreshold = 3, userId = null } = {}) {
         this._client = client;
         this._takerFeeRate = takerFeeRate;
+        this._userId = userId;
         // Balance cache: return last-known on transient failure, only return 0 after N consecutive fails.
         this._lastBalance = null;
         this._balanceFailStreak = 0;
@@ -151,6 +156,11 @@ class LiveBroker {
                         symbol, message: closeErr.message
                     });
                 }
+                try {
+                    _metricsRef?.slAttachOutcomesTotal?.labels(
+                        String(this._userId || 'master'), symbol, 'fail_closed'
+                    ).inc();
+                } catch (_) { /* noop */ }
                 const e = new Error(`SL attach failed for ${symbol} — entry fail-closed`);
                 e.code = 'SL_ATTACH_FAILED';
                 throw e;
@@ -377,6 +387,11 @@ class LiveBroker {
                     if (attempt > 1) {
                         logger.warn('[LiveBroker] SL attach succeeded after retry', { symbol, attempt, slOrderId: id });
                     }
+                    try {
+                        _metricsRef?.slAttachOutcomesTotal?.labels(
+                            String(this._userId || 'master'), symbol, attempt > 1 ? 'retry' : 'success'
+                        ).inc();
+                    } catch (_) { /* noop */ }
                     return id;
                 }
                 logger.warn('[LiveBroker] SL attach returned no orderId', { symbol, attempt, slRes });

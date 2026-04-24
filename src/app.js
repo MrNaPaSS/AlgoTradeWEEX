@@ -39,6 +39,7 @@ const { apiLimiter, registerLimiter } = require('./middleware/userRateLimit');
 const { createWebhookRouter } = require('./routes/webhook');
 const { createHealthRouter } = require('./routes/health');
 const { createMetricsRouter, metrics: promMetrics } = require('./routes/metrics');
+const { createAdminRouter } = require('./routes/admin');
 
 async function bootstrap() {
     // ── Live-mode startup guards: fail fast before touching exchange ──────────
@@ -299,6 +300,8 @@ async function bootstrap() {
     // Routes (rate-limit applies ONLY to /webhook, not /health or /metrics)
     app.use('/', createHealthRouter({ db, weexWs, weexClient }));
     app.use('/', createMetricsRouter({ weexWs }));
+    // Admin routes — orphan inspection / cleanup. No-op when ADMIN_TOKEN unset.
+    app.use('/', createAdminRouter({ config, positionManager, database: db }));
     // Mini App static files
     app.use('/mini-app', express.static('public/mini-app'));
 

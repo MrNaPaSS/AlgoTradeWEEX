@@ -49,6 +49,9 @@ const envSchema = z.object({
     MASTER_ENCRYPTION_KEY: z.string().default(''),
     MINI_APP_URL: z.string().default(''),
 
+    // Admin — protects /admin/* endpoints. When empty, admin endpoints are disabled.
+    ADMIN_TOKEN: z.string().default(''),
+
     OPENROUTER_API_KEY: z.string().default(''),
     OPENROUTER_MODEL: z.string().default('anthropic/claude-sonnet-4'),
     OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),

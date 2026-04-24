@@ -109,6 +109,22 @@ const webhookDuplicatesTotal = new client.Counter({
     registers: [registry]
 });
 
+/** TP polling iteration errors (labels: user_id, symbol, kind) */
+const tpPollErrorsTotal = new client.Counter({
+    name: 'algotrade_tp_poll_errors_total',
+    help: 'Errors during TP status polling (per user/symbol)',
+    labelNames: ['user_id', 'symbol', 'kind'],
+    registers: [registry]
+});
+
+/** SL attach outcomes (labels: user_id, symbol, result=success|retry|fail_closed) */
+const slAttachOutcomesTotal = new client.Counter({
+    name: 'algotrade_sl_attach_outcomes_total',
+    help: 'SL-attach outcomes including retry successes and fail-closed events',
+    labelNames: ['user_id', 'symbol', 'result'],
+    registers: [registry]
+});
+
 /**
  * Create Prometheus /metrics route.
  * @param {{ weexWs?: import('../api/weex/WeexWebSocket').WeexWebSocket }} deps
@@ -149,6 +165,8 @@ module.exports = {
         wsReconnectsTotal,
         riskPausesTotal,
         correlationPenaltiesTotal,
-        webhookDuplicatesTotal
+        webhookDuplicatesTotal,
+        tpPollErrorsTotal,
+        slAttachOutcomesTotal
     }
 };

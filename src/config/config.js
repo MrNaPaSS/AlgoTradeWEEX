@@ -99,6 +99,11 @@ const config = Object.freeze({
         miniAppUrl: env.MINI_APP_URL
     }),
 
+    admin: Object.freeze({
+        token: env.ADMIN_TOKEN,
+        enabled: Boolean(env.ADMIN_TOKEN && env.ADMIN_TOKEN.length >= 16)
+    }),
+
     metrics: Object.freeze({
         enabled: env.METRICS_ENABLED,
         path: env.METRICS_PATH

@@ -273,7 +273,7 @@ class UserTradeEngine {
             }
         });
 
-        const broker = new LiveBroker({ client });
+        const broker = new LiveBroker({ client, userId: row.user_id });
 
         const symbols = (row.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
         const riskConfig = this._buildRiskConfig(row);
