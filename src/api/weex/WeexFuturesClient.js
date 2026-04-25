@@ -543,23 +543,29 @@ class WeexFuturesClient {
 
         logger.info('[WeexFutures] cancelAllForSymbol', { symbol, count: botOrders.length, prefixes });
 
+        // Parallel cancellation. Each DELETE is independent — running them
+        // sequentially with `for await` previously took ~2s × N orders, which
+        // showed up as a 10–14s delay between user-click and `placeOrder` for
+        // a position with full SL+TP1+TP2+TP3 ladder. allSettled keeps error
+        // isolation: a single 404/already-cancelled doesn't fail the batch.
+        const results = await Promise.allSettled(botOrders.map((o) => {
+            const isAlgo = Boolean(o.clientAlgoId || o.planType || o.algoId);
+            const id = o.orderId || o.algoId;
+            return isAlgo
+                ? this.cancelAlgoOrder({ symbol, orderId: id }).then(() => id)
+                : this.cancelOrder({ symbol, orderId: id }).then(() => id);
+        }));
+
         const cancelled = [];
         const skipped = [];
-        for (const o of botOrders) {
-            try {
-                // Determine which endpoint to use based on order type
-                // Algo orders in WEEX usually have 'clientAlgoId' or 'planType'
-                const isAlgo = Boolean(o.clientAlgoId || o.planType || o.algoId);
-                
-                if (isAlgo) {
-                    await this.cancelAlgoOrder({ symbol, orderId: o.orderId || o.algoId });
-                } else {
-                    await this.cancelOrder({ symbol, orderId: o.orderId });
-                }
-                cancelled.push(o.orderId || o.algoId);
-            } catch (err) {
-                logger.debug('[WeexFutures] cancel order skipped', { orderId: o.orderId || o.algoId, message: err.message });
-                skipped.push(o.orderId || o.algoId);
+        for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            const id = botOrders[i].orderId || botOrders[i].algoId;
+            if (r.status === 'fulfilled') {
+                cancelled.push(id);
+            } else {
+                logger.debug('[WeexFutures] cancel order skipped', { orderId: id, message: r.reason?.message || String(r.reason) });
+                skipped.push(id);
             }
         }
         return { cancelled, skipped };

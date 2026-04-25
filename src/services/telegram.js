@@ -45,6 +45,35 @@ class TelegramService {
         return '⚪';
     }
 
+    /**
+     * Escape Telegram Markdown (legacy) reserved characters in a dynamic value
+     * so things like `user_manual` don't get parsed as italic and break the
+     * whole message with "Can't find end of the entity". Apply ONLY to values
+     * being interpolated into a Markdown-formatted message — never to the
+     * whole template (that would escape our intentional *bold* markers).
+     */
+    _md(s) {
+        if (s == null) return '';
+        return String(s).replace(/([_*`\[\]])/g, '\\$1');
+    }
+
+    /** Map internal reason codes to user-friendly labels (no underscores). */
+    _reasonLabel(reason) {
+        const map = {
+            user_manual:        'ручное закрытие',
+            admin_orphan_close: 'админ — orphan-позиции',
+            EMERGENCY_USER:     'аварийное закрытие',
+            EMERGENCY_MANUAL:   'аварийное закрытие',
+            STOP_LOSS_HIT:      'стоп-лосс',
+            TP1_HIT:            'тейк-профит 1',
+            TP2_HIT:            'тейк-профит 2',
+            TP3_HIT:            'тейк-профит 3',
+            FORCE_CLOSE:        'принудительное закрытие',
+            shutdown_liquidate: 'остановка бота'
+        };
+        return map[reason] || this._md(String(reason || '—'));
+    }
+
     _dirLabel(side) {
         const s = String(side || '').toLowerCase();
         if (s === 'long' || s === 'buy') return 'LONG';
@@ -380,8 +409,8 @@ ${position.slMovedToBreakeven ? '🛡️ SL перемещён в безубыт
         const emoji = Number(pnl) >= 0 ? '🟢' : '🔴';
         const message = `${emoji} *ПОЗИЦИЯ ЗАКРЫТА*
 ━━━━━━━━━━━━━━━
-📊 ${position.symbol} ${this._dirLabel(position.side)}
-📝 Причина: ${reason}
+📊 ${this._md(position.symbol)} ${this._dirLabel(position.side)}
+📝 Причина: ${this._reasonLabel(reason)}
 💵 P&L: ${sign}$${this._fmtNum(pnl, 2)}
 💰 Realized total: $${this._fmtNum(position.realizedPnl, 2)}`;
         await this.sendMessage(message, chatId);
