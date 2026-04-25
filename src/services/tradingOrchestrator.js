@@ -229,10 +229,10 @@ class TradingOrchestrator {
             userResults = await this._userTradeEngine.fanOutDecision(decision, snapshot);
         }
 
-        // Attach user results to the decision object so the webhook router can see them
-        decision.userResults = userResults;
-
-        return decision;
+        // Attach user results so the webhook router can see them. `decision` is
+        // frozen by the Arbiter (Object.freeze), so we cannot mutate it —
+        // return a shallow clone with the extra field instead.
+        return Object.assign({}, decision, { userResults });
     }
 
     onCandleClosed({ symbol, candle }) {
