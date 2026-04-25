@@ -1009,6 +1009,123 @@ class PositionManager {
         }
     }
 
+    /**
+     * User-initiated SL/TP edit. For each provided level, cancels the old plan
+     * order on the exchange and places a new one at the new trigger price.
+     * Updates DB + in-memory position.
+     *
+     * @param {string} positionId
+     * @param {{ stopLoss?:number, tp1Price?:number, tp2Price?:number, tp3Price?:number }} body
+     * @returns {Promise<{success:boolean, position?:Object, updates?:Object, error?:string}>}
+     */
+    async modifyProtection(positionId, body = {}) {
+        const all = this.getOpen();
+        const target = all.find((p) => p.positionId === positionId);
+        if (!target) {
+            return { success: false, error: `position ${positionId} not found or already closed` };
+        }
+        if (this._broker.mode !== 'live' || !this._broker._client) {
+            return { success: false, error: 'modify available only in live mode' };
+        }
+
+        const client = this._broker._client;
+        const { POSITION_SIDE } = require('../api/weex/endpoints');
+        const weexPositionSide = target.side === 'long' ? POSITION_SIDE.LONG : POSITION_SIDE.SHORT;
+
+        // Sanity-check direction: SL must be on the loss side, TP on the profit side
+        // relative to entry. Returns null when ok, error string otherwise.
+        const checkDirection = (price, kind) => {
+            if (!Number.isFinite(price)) return `${kind} not a number`;
+            if (price <= 0) return `${kind} must be positive`;
+            const isLong = target.side === 'long';
+            const entry = Number(target.entryPrice);
+            if (!Number.isFinite(entry)) return null; // can't validate without entry
+            if (kind === 'SL') {
+                if (isLong && price >= entry) return 'SL must be below entry for LONG';
+                if (!isLong && price <= entry) return 'SL must be above entry for SHORT';
+            } else {
+                if (isLong && price <= entry) return `${kind} must be above entry for LONG`;
+                if (!isLong && price >= entry) return `${kind} must be below entry for SHORT`;
+            }
+            return null;
+        };
+
+        const fields = [
+            { key: 'stopLoss',  level: 'SL',  planType: 'STOP_LOSS',   prefix: 'sl_',     orderField: 'slOrderId' },
+            { key: 'tp1Price',  level: 'TP1', planType: 'TAKE_PROFIT', prefix: 'tp_tp1_', orderField: 'tp1OrderId' },
+            { key: 'tp2Price',  level: 'TP2', planType: 'TAKE_PROFIT', prefix: 'tp_tp2_', orderField: 'tp2OrderId' },
+            { key: 'tp3Price',  level: 'TP3', planType: 'TAKE_PROFIT', prefix: 'tp_tp3_', orderField: 'tp3OrderId' }
+        ];
+
+        // Pre-validate so we fail-fast before touching the exchange
+        const requested = [];
+        for (const f of fields) {
+            if (body[f.key] === undefined || body[f.key] === null || body[f.key] === '') continue;
+            const px = Number(body[f.key]);
+            const err = checkDirection(px, f.level);
+            if (err) return { success: false, error: err };
+            // Skip no-op
+            if (Math.abs(px - Number(target[f.key] || 0)) < 1e-9) continue;
+            requested.push({ ...f, newPrice: px });
+        }
+        if (requested.length === 0) {
+            return { success: false, error: 'no changes requested' };
+        }
+
+        return await this._lock(target.symbol).runExclusive(async () => {
+            const updates = {};
+            for (const f of requested) {
+                const oldOrderId = target[f.orderField];
+                if (oldOrderId) {
+                    try {
+                        await client.cancelAlgoOrder({ symbol: target.symbol, orderId: oldOrderId });
+                    } catch (err) {
+                        // If the old order is already gone (e.g. just triggered), continue
+                        logger.warn('[PositionManager] cancel old plan order failed (will continue)', {
+                            symbol: target.symbol, orderField: f.orderField, oldOrderId, message: err.message
+                        });
+                    }
+                }
+                const placeRes = await client.placeTpSlOrder({
+                    symbol: target.symbol,
+                    planType: f.planType,
+                    triggerPrice: String(f.newPrice),
+                    executePrice: '0',
+                    quantity: String(target.remainingQuantity),
+                    positionSide: weexPositionSide,
+                    triggerPriceType: 'MARK_PRICE',
+                    clientAlgoId: f.prefix + Date.now()
+                });
+                const newOrderId = this._broker._parseTpSlOrderId
+                    ? this._broker._parseTpSlOrderId(placeRes)
+                    : (Array.isArray(placeRes) ? placeRes[0]?.orderId : placeRes?.orderId) || null;
+
+                updates[f.key] = f.newPrice;
+                updates[f.orderField] = newOrderId ? String(newOrderId) : null;
+                if (f.key === 'stopLoss') {
+                    updates.exchangeSlActive = Boolean(newOrderId);
+                    // user-driven move overrides the auto breakeven flag
+                    updates.slMovedToBreakeven = false;
+                }
+            }
+
+            const updated = updatePosition(target, updates);
+            await this._db.updatePosition(updated);
+
+            // replace in-memory entry
+            const arr = this._positions.get(target.symbol);
+            if (arr) {
+                const idx = arr.findIndex((p) => p.positionId === target.positionId);
+                if (idx >= 0) arr[idx] = updated;
+            }
+
+            logger.info('[PositionManager] protection modified', {
+                positionId, symbol: target.symbol, updates
+            });
+            return { success: true, position: updated, updates };
+        });
+    }
+
     computeTotalUnrealizedPnl(priceFn) {
         let total = 0;
         for (const arr of this._positions.values()) {

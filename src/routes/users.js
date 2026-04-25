@@ -329,6 +329,58 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
         }
     });
 
+    // ─── Close ONE position ─────────────────────────────────────────────
+    router.post('/me/positions/:positionId/close', async (req, res) => {
+        try {
+            const engine = userTradeEngine.getEngine(req.telegramUser.id);
+            if (!engine) return res.status(404).json({ success: false, error: 'Не найден' });
+
+            const { positionId } = req.params;
+            const result = await engine.positionManager.closePosition(positionId, 'user_manual');
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (err) {
+            logger.error('[users] close-one error', { message: err.message });
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    // ─── Modify SL / TP for ONE position ────────────────────────────────
+    router.patch('/me/positions/:positionId', express.json(), async (req, res) => {
+        try {
+            const engine = userTradeEngine.getEngine(req.telegramUser.id);
+            if (!engine) return res.status(404).json({ success: false, error: 'Не найден' });
+
+            const { positionId } = req.params;
+            const body = req.body || {};
+            // Accept only known fields, ignore unknown (defence-in-depth)
+            const safe = {};
+            for (const k of ['stopLoss', 'tp1Price', 'tp2Price', 'tp3Price']) {
+                if (body[k] !== undefined && body[k] !== null && body[k] !== '') {
+                    const n = Number(body[k]);
+                    if (!Number.isFinite(n)) {
+                        return res.status(400).json({ success: false, error: `${k} must be a number` });
+                    }
+                    safe[k] = n;
+                }
+            }
+            if (Object.keys(safe).length === 0) {
+                return res.status(400).json({ success: false, error: 'Нет изменений' });
+            }
+
+            const result = await engine.positionManager.modifyProtection(positionId, safe);
+            if (!result.success) {
+                return res.status(400).json(result);
+            }
+            res.json(result);
+        } catch (err) {
+            logger.error('[users] modify-position error', { message: err.message });
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
     // ─── Delete account ─────────────────────────────────────────────────
     router.delete('/me', async (req, res) => {
         try {

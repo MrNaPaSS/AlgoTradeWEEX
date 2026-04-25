@@ -922,6 +922,135 @@ input[type=range].range-slider::-moz-range-thumb {
 .val-sl { color: var(--red) !important; }
 .val-tp { color: var(--green) !important; }
 
+/* ── Position card: clickable + chevron + expand panel ───────────────────── */
+.position-card { cursor: pointer; transition: border-color .25s ease, background .25s ease; }
+.position-card:hover { border-color: rgba(255,255,255,0.12); }
+.position-card.is-expanded {
+    background: rgba(255,255,255,0.025);
+    border-color: rgba(255,255,255,0.14);
+}
+.pos-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.pos-chevron {
+    color: var(--text-3);
+    transition: transform .3s cubic-bezier(0.22,1,0.36,1);
+    line-height: 0;
+    flex-shrink: 0;
+}
+.position-card.is-expanded .pos-chevron { transform: rotate(180deg); color: var(--text-2); }
+
+/* The expand panel collapses via max-height — works without JS knowing the
+   final height, and animates smoothly. opacity adds a tasteful fade. */
+.pos-expand {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height .35s cubic-bezier(0.22,1,0.36,1), opacity .25s ease, margin-top .35s ease;
+    margin-top: 0;
+}
+.position-card.is-expanded .pos-expand {
+    max-height: 360px;
+    opacity: 1;
+    margin-top: 4px;
+}
+.pos-expand-inner {
+    padding-top: 14px;
+    border-top: 1px dashed rgba(255,255,255,0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.pos-edit-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin: 0;
+}
+.pos-edit-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+}
+.pos-edit-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: text;
+}
+.pos-edit-name {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    opacity: 0.85;
+}
+.pos-edit-field input {
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 9px 11px;
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    transition: border-color .2s ease, background .2s ease;
+    outline: none;
+}
+.pos-edit-field input:focus {
+    border-color: rgba(255,255,255,0.22);
+    background: rgba(255,255,255,0.06);
+}
+/* Hide spinner buttons in number inputs (cleaner mobile UI) */
+.pos-edit-field input::-webkit-outer-spin-button,
+.pos-edit-field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.pos-edit-field input[type=number] { -moz-appearance: textfield; }
+
+.pos-edit-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.btn-edit-save,
+.btn-edit-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    border: 1px solid;
+    transition: transform .12s ease, background .2s ease, border-color .2s ease;
+}
+.btn-edit-save {
+    background: rgba(0,217,126,0.10);
+    color: var(--green);
+    border-color: rgba(0,217,126,0.25);
+}
+.btn-edit-save:hover { background: rgba(0,217,126,0.16); border-color: rgba(0,217,126,0.4); }
+.btn-edit-save:active { transform: scale(0.98); }
+.btn-edit-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-edit-close {
+    background: rgba(255,77,107,0.08);
+    color: var(--red);
+    border-color: rgba(255,77,107,0.22);
+}
+.btn-edit-close:hover { background: rgba(255,77,107,0.14); border-color: rgba(255,77,107,0.36); }
+.btn-edit-close:active { transform: scale(0.98); }
+.btn-edit-close:disabled { opacity: 0.5; cursor: not-allowed; }
+
+
 /* Controls row */
 .controls-row {
     display: grid;

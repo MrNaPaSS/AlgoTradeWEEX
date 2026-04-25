@@ -94,6 +94,12 @@
     let _skeletonCleared = false;
     let _hasKeys = false;
     let _lastProfile = null;
+    // Position-card expand: which positionId (if any) is currently expanded.
+    // Persists across re-renders so the panel stays open while user edits.
+    let _expandedPid = null;
+    // Snapshot of input values per positionId so a refresh during edit doesn't
+    // wipe what the user has typed. Cleared on save/close/collapse.
+    const _editDraft = {};
     // Stats cache — populated from /me/status on each refresh(); the active
     // period is chosen via the .period-btn group.
     let _statsToday   = { totalTrades: 0, winRate: 0, totalPnl: 0 };
@@ -674,31 +680,165 @@
                 ticksHtml += '<span class="pnl-bar-tick" style="left:100%" data-label="' + endLabel + '"></span>';
             }
 
-            return '<div class="position-card ' + cls + '" role="listitem">' +
-                '<div class="pos-header">' +
+            // Persisted edits (so refresh doesn't blow away typed values)
+            var draft = _editDraft[p.positionId] || {};
+            var slEdit  = draft.stopLoss  != null ? draft.stopLoss  : (p.stopLoss  || '');
+            var t1Edit  = draft.tp1Price  != null ? draft.tp1Price  : (p.tp1Price  || '');
+            var t2Edit  = draft.tp2Price  != null ? draft.tp2Price  : (p.tp2Price  || '');
+            var t3Edit  = draft.tp3Price  != null ? draft.tp3Price  : (p.tp3Price  || '');
+            var isOpen  = _expandedPid === p.positionId;
+            var pidAttr = escapeHtml(String(p.positionId || ''));
+
+            return '<div class="position-card ' + cls + (isOpen ? ' is-expanded' : '') + '" role="listitem" data-pid="' + pidAttr + '">' +
+                '<div class="pos-header" data-action="toggle">' +
                     '<div class="pos-identity">' +
                         '<span class="pos-dir-badge">' + dir + '</span>' +
                         '<span class="pos-symbol">' + sym + '<span class="pos-symbol-suffix">USDT</span></span>' +
                         (lev ? '<span class="pos-lev">' + lev + '</span>' : '') +
                     '</div>' +
-                    '<span class="pos-pnl ' + pnlCls + '">' + pnlStr + '</span>' +
+                    '<div class="pos-header-right">' +
+                        '<span class="pos-pnl ' + pnlCls + '">' + pnlStr + '</span>' +
+                        '<span class="pos-chevron" aria-hidden="true">' +
+                            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+                        '</span>' +
+                    '</div>' +
                 '</div>' +
-                '<div class="pnl-bar"><div class="pnl-bar-fill" style="width:' + progress + '%"></div>' + ticksHtml + '</div>' +
-                '<div class="pos-data">' +
-                    // Row 1 — general position info (always 4 cells).
+                '<div class="pnl-bar" data-action="toggle"><div class="pnl-bar-fill" style="width:' + progress + '%"></div>' + ticksHtml + '</div>' +
+                '<div class="pos-data" data-action="toggle">' +
                     '<div class="pos-datum"><span class="pos-datum-label">Вход</span><span class="pos-datum-val">$' + fmt(p.entryPrice, 4) + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">Объём</span><span class="pos-datum-val">' + fmt(p.remainingQuantity, 4) + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">Ликвид.</span><span class="pos-datum-val val-sl">' + (p.liquidatePrice ? '$' + fmt(p.liquidatePrice, 4) : '—') + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">Маржа</span><span class="pos-datum-val">' + (p.marginSize ? '$' + fmt(p.marginSize, 2) : '—') + '</span></div>' +
-                    // Row 2 — Stop Loss + three take-profit levels (always 4 cells).
                     '<div class="pos-datum"><span class="pos-datum-label">SL' + (p.slMovedToBreakeven ? '·б/у' : '') + '</span><span class="pos-datum-val val-sl">' + (p.stopLoss ? '$' + fmt(p.stopLoss, 4) : '—') + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">TP1</span><span class="pos-datum-val val-tp">' + (p.tp1Price ? '$' + fmt(p.tp1Price, 4) : '—') + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">TP2</span><span class="pos-datum-val val-tp">' + (p.tp2Price ? '$' + fmt(p.tp2Price, 4) : '—') + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">TP3</span><span class="pos-datum-val val-tp">' + (p.tp3Price ? '$' + fmt(p.tp3Price, 4) : '—') + '</span></div>' +
                 '</div>' +
+                // Expanded edit panel — slides down via CSS max-height transition.
+                '<div class="pos-expand">' +
+                    '<div class="pos-expand-inner">' +
+                        '<p class="pos-edit-label">Изменить уровни (цена в USDT)</p>' +
+                        '<div class="pos-edit-grid">' +
+                            '<label class="pos-edit-field"><span class="pos-edit-name val-sl">SL</span>' +
+                                '<input type="number" inputmode="decimal" step="any" data-edit="stopLoss" value="' + escapeHtml(String(slEdit)) + '" placeholder="—"></label>' +
+                            '<label class="pos-edit-field"><span class="pos-edit-name val-tp">TP1</span>' +
+                                '<input type="number" inputmode="decimal" step="any" data-edit="tp1Price" value="' + escapeHtml(String(t1Edit)) + '" placeholder="—"></label>' +
+                            '<label class="pos-edit-field"><span class="pos-edit-name val-tp">TP2</span>' +
+                                '<input type="number" inputmode="decimal" step="any" data-edit="tp2Price" value="' + escapeHtml(String(t2Edit)) + '" placeholder="—"></label>' +
+                            '<label class="pos-edit-field"><span class="pos-edit-name val-tp">TP3</span>' +
+                                '<input type="number" inputmode="decimal" step="any" data-edit="tp3Price" value="' + escapeHtml(String(t3Edit)) + '" placeholder="—"></label>' +
+                        '</div>' +
+                        '<div class="pos-edit-actions">' +
+                            '<button type="button" class="btn-edit-save" data-action="save">' +
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
+                                '<span>Сохранить</span>' +
+                            '</button>' +
+                            '<button type="button" class="btn-edit-close" data-action="close">' +
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                                '<span>Закрыть позицию</span>' +
+                            '</button>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
                 '</div>';
         }).join('');
     }
+
+    // ── Position-card interactions (delegated, survives re-renders) ───────────
+    document.getElementById('positions-list').addEventListener('input', function (e) {
+        var input = e.target.closest('input[data-edit]');
+        if (!input) return;
+        var card = input.closest('.position-card');
+        if (!card) return;
+        var pid = card.getAttribute('data-pid');
+        var key = input.getAttribute('data-edit');
+        if (!_editDraft[pid]) _editDraft[pid] = {};
+        _editDraft[pid][key] = input.value;
+    });
+
+    document.getElementById('positions-list').addEventListener('click', async function (e) {
+        var card = e.target.closest('.position-card');
+        if (!card) return;
+        var pid = card.getAttribute('data-pid');
+        if (!pid) return;
+
+        var saveBtn  = e.target.closest('[data-action="save"]');
+        var closeBtn = e.target.closest('[data-action="close"]');
+        var toggleZ  = e.target.closest('[data-action="toggle"]');
+
+        if (saveBtn) {
+            e.stopPropagation();
+            haptic('medium');
+            saveBtn.disabled = true;
+            try {
+                var body = {};
+                card.querySelectorAll('input[data-edit]').forEach(function (inp) {
+                    var v = inp.value.trim();
+                    if (v !== '') body[inp.getAttribute('data-edit')] = Number(v);
+                });
+                if (Object.keys(body).length === 0) {
+                    toast('Нечего сохранять', 'info');
+                    return;
+                }
+                var res = await api('PATCH', '/me/positions/' + encodeURIComponent(pid), body);
+                if (res && res.success) {
+                    hapticNotify('success');
+                    toast('Уровни обновлены', 'ok');
+                    delete _editDraft[pid];
+                    await refresh();
+                } else {
+                    throw new Error((res && res.error) || 'Ошибка');
+                }
+            } catch (err) {
+                hapticNotify('error');
+                toast(err.message || 'Не удалось сохранить', 'err', 5000);
+            } finally {
+                saveBtn.disabled = false;
+            }
+            return;
+        }
+
+        if (closeBtn) {
+            e.stopPropagation();
+            haptic('heavy');
+            var ok = await showConfirm('Закрыть позицию по рынку? Действие необратимо.');
+            if (!ok) return;
+            closeBtn.disabled = true;
+            try {
+                var res2 = await api('POST', '/me/positions/' + encodeURIComponent(pid) + '/close');
+                if (res2 && res2.success) {
+                    hapticNotify('success');
+                    toast('Позиция закрыта', 'ok');
+                    delete _editDraft[pid];
+                    _expandedPid = null;
+                    await refresh();
+                } else {
+                    throw new Error((res2 && res2.error) || 'Ошибка');
+                }
+            } catch (err) {
+                hapticNotify('error');
+                toast(err.message || 'Не удалось закрыть', 'err', 5000);
+            } finally {
+                closeBtn.disabled = false;
+            }
+            return;
+        }
+
+        // Toggle expand only when click landed on header / pnl-bar / pos-data
+        if (toggleZ) {
+            haptic('light');
+            if (_expandedPid === pid) {
+                _expandedPid = null;
+                card.classList.remove('is-expanded');
+            } else {
+                // collapse the previous one if any
+                var prev = document.querySelector('.position-card.is-expanded');
+                if (prev) prev.classList.remove('is-expanded');
+                _expandedPid = pid;
+                card.classList.add('is-expanded');
+            }
+        }
+    });
 
     function startRefresh() {
         refresh();
