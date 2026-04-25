@@ -236,64 +236,77 @@ class LiveBroker {
 
         const orderId = res.orderId || res.data?.orderId;
 
-        // Get the ACTUAL fill price from the exchange. WEEX market `placeOrder`
-        // returns only {orderId} — the response has no fillPrice. Previously we
-        // fell back to the caller-supplied `markPrice` which in user-initiated
-        // closes was just `target.entryPrice`. That made fillPrice == entryPrice
-        // and PnL ≈ −fees regardless of what actually happened on the exchange.
-        // Now we query the order after fill to get dealAvgPrice / avgPrice.
-        let actualFillPrice = null;
+        // Authoritative PnL straight from the exchange. WEEX `userTrades`
+        // returns one row per fill with the canonical `realizedPnl` and
+        // `commission` — this is the truth (already in WEEX's books). We used
+        // to recompute pnl locally as (fill-entry)*qty - fee, but that is
+        // brittle: market `placeOrder` doesn't echo fillPrice and the
+        // caller-supplied markPrice fallback was sometimes just entryPrice
+        // (resulting in pnl ≈ −fees regardless of actual market move).
+        let pnl = null;
+        let fillPrice = null;
+        let fills = [];
         if (orderId) {
-            // Market fills are typically <100ms but the exchange needs a beat to
-            // record dealAvgPrice. Try once, then once more after 300ms if still
-            // pending. Total added latency ~50–350ms vs huge accuracy win.
-            for (let attempt = 1; attempt <= 2 && !actualFillPrice; attempt++) {
+            // Market fills are <100ms but userTrades needs a moment to index.
+            // Probe up to 3 times: immediate, +250ms, +600ms. Stops early once
+            // we see fills covering the requested quantity.
+            const targetQty = Number(quantity);
+            const delays = [0, 250, 600];
+            for (const ms of delays) {
+                if (ms) await new Promise((r) => setTimeout(r, ms));
                 try {
-                    if (attempt > 1) await new Promise((r) => setTimeout(r, 300));
-                    const detail = await this._client.getOrder({ symbol, orderId });
-                    const px = Number(
-                        detail?.dealAvgPrice ?? detail?.avgPrice
-                        ?? detail?.fillPrice ?? detail?.price
-                    );
-                    if (Number.isFinite(px) && px > 0) actualFillPrice = px;
+                    const got = await this._client.getUserTrades({ symbol, orderId, limit: 50 });
+                    if (Array.isArray(got) && got.length > 0) {
+                        fills = got;
+                        const qtySum = fills.reduce((s, f) => s + Number(f.qty || 0), 0);
+                        if (qtySum >= targetQty - 1e-6) break;
+                    }
                 } catch (err) {
-                    logger.debug('[LiveBroker] closeMarket: getOrder probe failed', {
-                        attempt, message: err.message
+                    logger.debug('[LiveBroker] closeMarket: getUserTrades probe failed', {
+                        delay: ms, message: err.message
                     });
                 }
             }
         }
 
-        // Order of preference: actual filled price > server echo on placeOrder
-        //   (rare) > caller-supplied markPrice fallback (least accurate).
-        const fillPrice = actualFillPrice
-            ?? Number(res.price || res.data?.price)
-            ?? Number(markPrice)
-            ?? null;
-
-        // Compute realised PnL locally (approximation — WEEX funding/fees recon later).
-        //   LONG:  (fill - entry) * qty
-        //   SHORT: (entry - fill) * qty
-        // Minus 1x taker fee for the closing leg (open fee already paid).
-        let pnl = 0;
-        if (Number.isFinite(entryPrice) && Number.isFinite(fillPrice) && Number.isFinite(quantity)) {
-            const gross = side === 'long'
-                ? (fillPrice - entryPrice) * quantity
-                : (entryPrice - fillPrice) * quantity;
-            const fee = Math.abs(fillPrice * quantity) * this._takerFeeRate;
-            pnl = gross - fee;
+        if (fills.length > 0) {
+            // Sum across fills. realizedPnl is gross PnL, commission is the
+            // closing fee (open fee was deducted at entry). Subtract commission
+            // to get net realized.
+            let pnlSum = 0;
+            let qtySum = 0;
+            let quoteSum = 0;
+            for (const f of fills) {
+                pnlSum   += Number(f.realizedPnl || 0);
+                pnlSum   -= Math.abs(Number(f.commission || 0));
+                qtySum   += Number(f.qty || 0);
+                quoteSum += Number(f.quoteQty || 0);
+            }
+            pnl = pnlSum;
+            fillPrice = qtySum > 0 ? quoteSum / qtySum : null;
+            logger.info('[LiveBroker] market close (authoritative pnl from userTrades)', {
+                symbol, side, quantity, fillPrice, entryPrice, pnl, orderId,
+                fillCount: fills.length, qtySum
+            });
         } else {
-            // Bug 1 fix: when entryPrice is missing (e.g. orphan-synced positions
-            // that were opened before multi-user tracking), fall back to 0 instead
-            // of null so realized_pnl / totalTrades still accumulate downstream.
-            logger.warn('[LiveBroker] closeMarket: pnl unknown, defaulting to 0', {
-                symbol, side, quantity, entryPrice, fillPrice
+            // Last-resort fallback: WEEX hasn't indexed the fill yet. Compute
+            // approximation locally so we at least record SOMETHING and the
+            // backfill_pnl.js script can correct it later from authoritative data.
+            const approxFill = Number(res.price || res.data?.price) || Number(markPrice) || null;
+            if (Number.isFinite(entryPrice) && Number.isFinite(approxFill) && Number.isFinite(quantity)) {
+                const gross = side === 'long'
+                    ? (approxFill - entryPrice) * quantity
+                    : (entryPrice - approxFill) * quantity;
+                const fee = Math.abs(approxFill * quantity) * this._takerFeeRate;
+                pnl = gross - fee;
+                fillPrice = approxFill;
+            } else {
+                pnl = 0;
+            }
+            logger.warn('[LiveBroker] market close: userTrades empty, using approximation', {
+                symbol, side, quantity, fillPrice, entryPrice, pnl, orderId
             });
         }
-
-        logger.info('[LiveBroker] market close', {
-            symbol, side, quantity, fillPrice, entryPrice, pnl, orderId: res.orderId
-        });
 
         return {
             orderId: res.orderId || res.data?.orderId,
