@@ -187,6 +187,9 @@
         if (!p || p === _statsPeriod) return;
         _statsPeriod = p;
         renderStats();
+        // Sparkline tracks the active period — redraw without waiting for the
+        // 10s refresh tick so the user sees instant feedback on tab switch.
+        refresh();
     });
 
     // Render the Onboarding/API screen in the correct state — either the registration
@@ -536,13 +539,41 @@
             renderStats();
             var pnl = Number((_statsPeriod === 'today' ? _statsToday : _statsAllTime).totalPnl || 0);
 
-            // Sparkline
+            // Sparkline — REAL equity curve from closed trades. Filter by the
+            // currently-active period so "Сегодня" shows today's progression
+            // and "Месяц" shows the last 30 days. If the period has 0–1 trades
+            // we draw a flat line at current balance (more honest than fake noise).
             if (bal != null) {
                 var spk = document.getElementById('sparkline-svg');
-                var variation = bal * 0.003;
-                var pts = Array.from({ length: 20 }, function (_, i) {
-                    return bal + (pnl * (i / 19)) + Math.sin(i * 1.4) * variation * (1 - i / 19);
-                });
+                var series = Array.isArray(data.pnlSeries) ? data.pnlSeries : [];
+                var DAY = 24 * 60 * 60 * 1000;
+                var nowMs = Date.now();
+                var cutoff = null;
+                if (_statsPeriod === 'today') {
+                    var d = new Date(); d.setHours(0,0,0,0);
+                    cutoff = d.getTime();
+                } else if (_statsPeriod === '7d')  cutoff = nowMs - 7 * DAY;
+                else if (_statsPeriod === '30d') cutoff = nowMs - 30 * DAY;
+                // 'all' → no cutoff
+                var filtered = cutoff != null
+                    ? series.filter(function (p) { return Number(p.closedAt) >= cutoff; })
+                    : series;
+
+                // Cumulative sum FORWARD from the past, then translate so the
+                // last value lands at the current balance (the curve "ends now"
+                // at the live wallet number).
+                var pts;
+                if (filtered.length === 0) {
+                    pts = [bal, bal];
+                } else {
+                    var run = 0;
+                    var cum = filtered.map(function (p) { run += Number(p.realizedPnl) || 0; return run; });
+                    var last = cum[cum.length - 1];
+                    // Anchor: equity_now = balance, equity_at_each_step = balance - (last - cum[i])
+                    pts = cum.map(function (c) { return bal - (last - c); });
+                    // Prepend the "starting point" so a single trade still renders a 2-point line
+                    pts.unshift(bal - last);
+                }
                 drawSparkline(spk, pts, pnl >= 0);
             }
 

@@ -483,6 +483,42 @@ class Database {
         };
     }
 
+    /**
+     * Recent CLOSED trades for sparkline / equity-curve rendering.
+     * Returns oldest → newest within the window so the caller can build a
+     * cumulative PnL series by simple running-sum.
+     *
+     * @param {string|number} userId
+     * @param {Object} [opts]
+     * @param {boolean} [opts.includeOrphaned=false]
+     * @param {number}  [opts.sinceTs=null]    epoch ms; null = no lower bound
+     * @param {number}  [opts.limit=60]        max rows (most-recent if window has more)
+     * @returns {Promise<Array<{closedAt:number, realizedPnl:number}>>}
+     */
+    async getRecentClosedTrades(userId, { includeOrphaned = false, sinceTs = null, limit = 60 } = {}) {
+        let sql = `SELECT closed_at, realized_pnl FROM positions
+                   WHERE status = 'CLOSED' AND closed_at IS NOT NULL`;
+        const params = [];
+        if (sinceTs !== null) { sql += ` AND closed_at >= ?`; params.push(sinceTs); }
+        if (userId) {
+            if (includeOrphaned) sql += ` AND (user_id = ? OR user_id IS NULL)`;
+            else                 sql += ` AND user_id = ?`;
+            params.push(userId);
+        }
+        // Order DESC + LIMIT to get the most-recent N, then we'll flip to ASC in JS
+        // so cumulative-sum makes sense.
+        sql += ` ORDER BY closed_at DESC LIMIT ?`;
+        params.push(Math.max(1, Math.min(500, Number(limit) || 60)));
+
+        const res = this._db.exec(sql, params);
+        if (!res[0] || !res[0].values) return [];
+        const rows = res[0].values.map(([t, p]) => ({
+            closedAt: Number(t),
+            realizedPnl: Number(p)
+        }));
+        return rows.reverse(); // oldest → newest
+    }
+
     async debugUpdatePosition(symbol, fields, userId) {
         if (!userId) {
             // Hard-fail instead of silently clobbering every user's open position

@@ -213,11 +213,15 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
             // the same numbers as the bot's /stats command for the single-user case.
             const now = Date.now();
             const DAY = 24 * 60 * 60 * 1000;
-            const [stats, stats7d, stats30d, allTimeStats] = await Promise.all([
+            const [stats, stats7d, stats30d, allTimeStats, pnlSeries] = await Promise.all([
                 db.getDailyStats(userId, { includeOrphaned: true }),
                 db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 7 * DAY }),
                 db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY }),
-                db.getAllTimeStats(userId, { includeOrphaned: true })
+                db.getAllTimeStats(userId, { includeOrphaned: true }),
+                // Sparkline series — last 30 days of trades is enough resolution
+                // for the small chart and works for every period the user picks
+                // (today/7d/30d/all-time). The frontend slices it by period.
+                db.getRecentClosedTrades(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY, limit: 100 })
             ]);
 
             // Diagnostic: dump per-period aggregates so we can see on the VPS
@@ -280,7 +284,8 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                 stats: stats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
                 stats7d:  stats7d  || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
                 stats30d: stats30d || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
-                allTimeStats: allTimeStats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 }
+                allTimeStats: allTimeStats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
+                pnlSeries: pnlSeries || []
             });
         } catch (err) {
             logger.error('[users] status error', { message: err.message });
