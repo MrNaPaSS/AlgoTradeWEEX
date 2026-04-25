@@ -19,9 +19,11 @@ function createAdminRouter({ config, positionManager, database } = {}) {
     const router = express.Router();
 
     if (!config?.admin?.enabled) {
-        // Return a stub router that rejects every request so callers get a
-        // clear 404-ish response instead of silent mount failure.
-        router.use((_req, res) => {
+        // Scope the disabled-stub to /admin/* ONLY. Mounted at '/' in app.js,
+        // a bare router.use() would intercept EVERY request in the app
+        // (including /api/users/me) and 404 the entire app. We want a 404
+        // only when someone actually tries to use admin endpoints.
+        router.use('/admin', (_req, res) => {
             res.status(404).json({ success: false, error: 'admin routes disabled (ADMIN_TOKEN not configured)' });
         });
         return router;
