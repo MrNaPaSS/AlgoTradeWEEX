@@ -234,9 +234,42 @@ class LiveBroker {
             quantity
         });
 
-        // Derive fill price: server echo > markPrice fallback.
-        // Markt orders on WEEX don't echo fill price reliably; use markPrice as approximation.
-        const fillPrice = Number(res.price || res.data?.price) || Number(markPrice) || null;
+        const orderId = res.orderId || res.data?.orderId;
+
+        // Get the ACTUAL fill price from the exchange. WEEX market `placeOrder`
+        // returns only {orderId} — the response has no fillPrice. Previously we
+        // fell back to the caller-supplied `markPrice` which in user-initiated
+        // closes was just `target.entryPrice`. That made fillPrice == entryPrice
+        // and PnL ≈ −fees regardless of what actually happened on the exchange.
+        // Now we query the order after fill to get dealAvgPrice / avgPrice.
+        let actualFillPrice = null;
+        if (orderId) {
+            // Market fills are typically <100ms but the exchange needs a beat to
+            // record dealAvgPrice. Try once, then once more after 300ms if still
+            // pending. Total added latency ~50–350ms vs huge accuracy win.
+            for (let attempt = 1; attempt <= 2 && !actualFillPrice; attempt++) {
+                try {
+                    if (attempt > 1) await new Promise((r) => setTimeout(r, 300));
+                    const detail = await this._client.getOrder({ symbol, orderId });
+                    const px = Number(
+                        detail?.dealAvgPrice ?? detail?.avgPrice
+                        ?? detail?.fillPrice ?? detail?.price
+                    );
+                    if (Number.isFinite(px) && px > 0) actualFillPrice = px;
+                } catch (err) {
+                    logger.debug('[LiveBroker] closeMarket: getOrder probe failed', {
+                        attempt, message: err.message
+                    });
+                }
+            }
+        }
+
+        // Order of preference: actual filled price > server echo on placeOrder
+        //   (rare) > caller-supplied markPrice fallback (least accurate).
+        const fillPrice = actualFillPrice
+            ?? Number(res.price || res.data?.price)
+            ?? Number(markPrice)
+            ?? null;
 
         // Compute realised PnL locally (approximation — WEEX funding/fees recon later).
         //   LONG:  (fill - entry) * qty
