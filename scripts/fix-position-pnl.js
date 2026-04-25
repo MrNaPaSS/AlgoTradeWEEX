@@ -154,9 +154,20 @@ function getArg(name) {
         process.exit(0);
     }
 
-    db._db.run('UPDATE positions SET realized_pnl = ? WHERE position_id = ?', [pnlSum, row.position_id]);
-    db.persist?.();
-    console.log('OK — updated realized_pnl for', row.position_id, 'from', row.realized_pnl, 'to', pnlSum);
+    // Use the high-level db.run — it sets _dirty so _persistIfDirty actually
+    // flushes to disk. Raw db._db.run bypasses the dirty flag and the next
+    // persist tick is a no-op, leaving the change in-memory only.
+    await db.run('UPDATE positions SET realized_pnl = ? WHERE position_id = ?', [pnlSum, row.position_id]);
+    db._persistIfDirty();
+
+    // Verify by reading back
+    const verify = db._db.exec('SELECT realized_pnl FROM positions WHERE position_id = ?', [row.position_id]);
+    const written = verify[0]?.values?.[0]?.[0];
+    console.log('OK — updated realized_pnl for', row.position_id, 'from', row.realized_pnl, 'to', written);
+    if (Math.abs(Number(written) - pnlSum) > 1e-6) {
+        console.error('WARNING: written value differs from computed — disk persist may have failed!');
+        process.exit(1);
+    }
     process.exit(0);
 })().catch((err) => {
     console.error('FAILED:', err);
