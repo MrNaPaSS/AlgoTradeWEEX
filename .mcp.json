@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "claude-flow": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@claude-flow/cli@latest",
+        "mcp",
+        "start"
+      ],
+      "env": {
+        "npm_config_update_notifier": "false",
+        "CLAUDE_FLOW_MODE": "v3",
+        "CLAUDE_FLOW_HOOKS_ENABLED": "true",
+        "CLAUDE_FLOW_TOPOLOGY": "hierarchical",
+        "CLAUDE_FLOW_MAX_AGENTS": "8",
+        "CLAUDE_FLOW_STRATEGY": "specialized",
+        "CLAUDE_FLOW_MEMORY_BACKEND": "agentdb",
+        "CLAUDE_FLOW_HNSW": "true",
+        "CLAUDE_FLOW_NEURAL": "true",
+        "CLAUDE_FLOW_LEARNING": "true"
+      },
+      "autoStart": true
+    }
+  }
+}
