@@ -291,13 +291,33 @@ class PositionManager {
                 // to avoid "Parameter orderId cannot be empty" error.
                 const openAlgo = await this._broker._client.getAlgoOpenOrders(position.symbol);
                 const stillOpen = openAlgo.some(o => (o.clientAlgoId || o.clientOrderId) === orderId);
-                
-                if (!stillOpen) {
-                    // If not in open algo orders, it might be filled or cancelled.
-                    // We trigger a full sync to be sure.
-                    logger.info('[PositionManager] Algo order no longer in open list, triggering sync', { symbol: position.symbol, orderId });
-                    await this.syncWithExchange();
+
+                if (stillOpen) return;
+
+                // Plan order left the open list — could be FILLED or CANCELLED.
+                // getOrder won't resolve plan-only client ids on WEEX, so confirm
+                // via user-trades: a close-side fill on this positionSide whose
+                // qty roughly matches the ladder fraction is our TP fill.
+                logger.info('[PositionManager] Algo order no longer in open list, attempting fill confirmation via trades', {
+                    symbol: position.symbol, orderId, level
+                });
+
+                const fillOrder = await this._findAlgoFillFromTrades(position, level, fraction);
+                if (fillOrder) {
+                    logger.info('[PositionManager] Confirmed TP fill via getUserTrades (algo path)', {
+                        symbol: position.symbol, level, tradeId: fillOrder.orderId,
+                        executedQty: fillOrder.executedQty, avgPrice: fillOrder.avgPrice
+                    });
+                    await this._applyTpFill(position, level, orderId, fillOrder, { algoPath: true });
+                    return;
                 }
+
+                // No matching fill yet — keep the existing safety net so a
+                // cancellation (or eventual-consistency lag) still gets reconciled.
+                logger.info('[PositionManager] No matching close-trade yet, triggering sync', {
+                    symbol: position.symbol, orderId
+                });
+                await this.syncWithExchange();
                 return;
             }
 
@@ -324,153 +344,254 @@ class PositionManager {
             if (status !== 'FILLED') return;
 
             logger.info(`[PositionManager] TP${level} FILLED on exchange`, { symbol: position.symbol, orderId });
-
-            // C4 fix: prefer executedQty from exchange over fraction-guess — this is
-            // the authoritative close quantity and stays correct when risk percents
-            // in config drift from the ones used when the ladder was placed.
-            const executedQty = Number(order.executedQty ?? order.executedQuantity ?? order.cumQuote ?? 0);
-            const fallbackQty = position.remainingQuantity * fraction;
-            const closeQtyRaw = Number.isFinite(executedQty) && executedQty > 0 ? executedQty : fallbackQty;
-            // Clamp to what's actually remaining to avoid negative remaining on rounding drift.
-            const closeQty = Math.min(Math.max(closeQtyRaw, 0), position.remainingQuantity);
-            const remaining = position.remainingQuantity - closeQty;
-
-            const fillPrice = Number(
-                order.avgPrice ?? order.price ??
-                (level === 1 ? position.tp1Price : level === 2 ? position.tp2Price : position.tp3Price)
-            );
-
-            // C2 fix: subtract taker fee, matching LiveBroker.closeMarket accounting.
-            const grossPnl = position.side === 'long'
-                ? (fillPrice - position.entryPrice) * closeQty
-                : (position.entryPrice - fillPrice) * closeQty;
-            const takerFeeRate = this._broker._takerFeeRate ?? 0.0004;
-            const fee = Math.abs(fillPrice * closeQty) * takerFeeRate;
-            const netPnl = grossPnl - fee;
-
-            const updates = {
-                remainingQuantity: remaining,
-                realizedPnl: position.realizedPnl + netPnl,
-                status: remaining > 0 ? 'PARTIAL' : 'CLOSED',
-                closedAt: remaining > 0 ? null : Date.now()
-            };
-
-            // C5 fix: null out the consumed tpNPrice too so a later mutation to
-            // slMovedToBreakeven can't accidentally re-arm the local exit branch.
-            if (level === 1) {
-                updates.tp1OrderId = null;
-                updates.tp1Price = null;
-                // Bug 2 fix: do NOT set slMovedToBreakeven / stopLoss here.
-                // Persist them only AFTER modifySlTp on the exchange succeeds
-                // (see block below). Otherwise the DB can drift ahead of the
-                // exchange state and we'll never retry the move.
-            } else if (level === 2) {
-                updates.tp2OrderId = null;
-                updates.tp2Price = null;
-            } else if (level === 3) {
-                updates.tp3OrderId = null;
-                updates.tp3Price = null;
-            }
-
-            // M6 fix: refresh exchangeTpActive flag once all ladder orders consumed.
-            const remainingTpIds = [
-                level === 1 ? null : position.tp1OrderId,
-                level === 2 ? null : position.tp2OrderId,
-                level === 3 ? null : position.tp3OrderId
-            ];
-            updates.exchangeTpActive = remainingTpIds.some((id) => Boolean(id));
-
-            const updated = updatePosition(position, updates);
-            await this._db.updatePosition(updated);
-            await this._db.insertPartialClose({
-                positionId: position.positionId,
-                tpLevel: level,
-                price: fillPrice,
-                quantity: closeQty,
-                pnl: netPnl,
-                orderId: order.orderId || orderId,
-                closedAt: Date.now()
-            });
-            this._replace(updated);
-
-            if (this._riskGuard && Number.isFinite(netPnl) && netPnl !== 0) {
-                try { await this._riskGuard.recordRealisedPnl(netPnl); }
-                catch (err) { logger.error('[PositionManager] riskGuard.recordRealisedPnl failed (poll path)', { message: err.message }); }
-            }
-
-            if (remaining <= 0) {
-                // Full close through the ladder — drop from in-memory map.
-                const arr = (this._positions.get(position.symbol) || [])
-                    .filter((p) => p.positionId !== position.positionId);
-                this._positions.set(position.symbol, arr);
-                this._onEvent('positionClosed', { position: updated, reason: `TP${level}:exchange`, pnl: netPnl });
-            } else {
-                this._onEvent('partialClose', { position: updated, level, pnl: netPnl });
-            }
-
-            // C3 fix: breakeven move goes through public modifySlTp with the
-            // tracked slOrderId so the fallback cancels ONLY the old SL.
-            if (level === 1 && position.slOrderId && typeof this._broker.modifySlTp === 'function') {
-                try {
-                    const beSl = this._computeBreakevenPrice(position, fillPrice);
-                    // Safety distance check — SL must stay on the correct side of
-                    // the current (fill) price with a 0.1% buffer to avoid reject.
-                    const buffer = fillPrice * 0.001;
-                    const isLongValid = position.side === 'long' && beSl != null && beSl < (fillPrice - buffer);
-                    const isShortValid = position.side === 'short' && beSl != null && beSl > (fillPrice + buffer);
-
-                    if (isLongValid || isShortValid) {
-                        logger.info('[PositionManager] Moving exchange SL to fee-adjusted breakeven (poll path)', {
-                            symbol: position.symbol, slOrderId: position.slOrderId,
-                            entryPrice: position.entryPrice, beSl
-                        });
-                        const res = await this._broker.modifySlTp({
-                            symbol: position.symbol,
-                            orderId: position.slOrderId,
-                            slTriggerPrice: beSl
-                        });
-
-                        // Bug 2 fix: only now — after the exchange confirms — mark
-                        // the breakeven move in DB / in-memory state. If modifySlTp
-                        // failed or was skipped, the next poll tick will retry because
-                        // slMovedToBreakeven is still false.
-                        if (res && res.success) {
-                            const currentRef = (this._positions.get(position.symbol) || [])
-                                .find(x => x.positionId === position.positionId) || updated;
-                            const patch = {
-                                slMovedToBreakeven: true,
-                                stopLoss: beSl
-                            };
-                            if (res.mode === 'replace' && res.slOrderId) {
-                                logger.info('[PositionManager] Updating slOrderId after polling replace-move', {
-                                    symbol: position.symbol, old: position.slOrderId, new: res.slOrderId
-                                });
-                                patch.slOrderId = res.slOrderId;
-                            }
-                            const synced = updatePosition(currentRef, patch);
-                            await this._db.updatePosition(synced);
-                            this._replace(synced);
-                        } else {
-                            logger.warn('[PositionManager] modifySlTp did not confirm success; will retry', {
-                                symbol: position.symbol, res
-                            });
-                        }
-                    } else {
-                        logger.warn('[PositionManager] Breakeven move skipped (poll path): price too close', {
-                            symbol: position.symbol, entryPrice: position.entryPrice, fillPrice
-                        });
-                    }
-                } catch (err) {
-                    logger.error('[PositionManager] Failed to move exchange SL to breakeven (poll path)', {
-                        symbol: position.symbol, message: err.message
-                    });
-                }
-            }
+            await this._applyTpFill(position, level, orderId, order, { algoPath: false, fraction });
         } catch (err) {
             logger.debug(`[PositionManager] checkTpFill failed`, { orderId, message: err.message });
             try {
                 _metricsRef?.tpPollErrorsTotal?.labels(String(this._userId || 'master'), 'unknown', 'checkfill').inc();
             } catch (_) { /* noop */ }
+        }
+    }
+
+    /**
+     * Search recent user-trades for a close-side fill matching this TP level.
+     * Used when the plan order leaves the open list but `getOrder` cannot
+     * resolve it (WEEX plan-only client ids). Returns an order-shaped object
+     * that `_applyTpFill` can consume, or null if no convincing match yet.
+     *
+     * Match criteria:
+     *   - symbol matches (server-side filter)
+     *   - time >= position.openedAt
+     *   - positionSide matches (LONG / SHORT)
+     *   - side is close-side (SELL for long, BUY for short)
+     *   - qty within 30% of expected ladder slice (accounts for rounding /
+     *     re-entries; we still want to avoid mistaking the entry fill itself,
+     *     which is on the OPEN side and thus excluded above)
+     *
+     * @param {import('../domain/types').Position} position
+     * @param {1|2|3} level
+     * @param {number} fraction
+     * @returns {Promise<Object|null>} order-shaped: { executedQty, avgPrice, orderId }
+     */
+    async _findAlgoFillFromTrades(position, level, fraction) {
+        try {
+            if (!this._broker?._client?.getUserTrades) return null;
+            const startTime = Number(position.openedAt) || (Date.now() - 24 * 3600 * 1000);
+            const endTime = Date.now() + 30_000;
+            const trades = await this._broker._client.getUserTrades({
+                symbol: position.symbol,
+                startTime,
+                endTime,
+                limit: 50
+            });
+            if (!Array.isArray(trades) || trades.length === 0) return null;
+
+            const expectedPosSide = position.side === 'long' ? 'LONG' : 'SHORT';
+            const closeSide = position.side === 'long' ? 'SELL' : 'BUY';
+            const expectedQty = Math.max(position.remainingQuantity * fraction, 0);
+            const qtyTolerance = Math.max(expectedQty * 0.3, 1e-9);
+
+            // Walk newest-first so we lock onto the most recent close that fits.
+            const sorted = [...trades].sort((a, b) => Number(b.time || 0) - Number(a.time || 0));
+            for (const t of sorted) {
+                const posSide = String(t.positionSide || '').toUpperCase();
+                const side = String(t.side || '').toUpperCase();
+                if (posSide !== expectedPosSide) continue;
+                if (side !== closeSide) continue;
+                const tTime = Number(t.time || 0);
+                if (tTime && tTime < startTime) continue;
+                const qty = Number(t.qty || 0);
+                if (!Number.isFinite(qty) || qty <= 0) continue;
+                if (Math.abs(qty - expectedQty) > qtyTolerance) continue;
+
+                return {
+                    executedQty: qty,
+                    avgPrice: Number(t.price || 0),
+                    orderId: t.orderId ? String(t.orderId) : (t.id ? String(t.id) : undefined)
+                };
+            }
+            return null;
+        } catch (err) {
+            logger.warn('[PositionManager] _findAlgoFillFromTrades failed', {
+                symbol: position.symbol, level, message: err.message
+            });
+            try {
+                _metricsRef?.tpPollErrorsTotal?.labels(
+                    String(this._userId || 'master'), position.symbol, 'tradeLookup'
+                ).inc();
+            } catch (_) { /* noop */ }
+            return null;
+        }
+    }
+
+    /**
+     * Apply a confirmed TP fill: persist partial close, refresh ladder state,
+     * emit events, and (for level 1) move SL to fee-adjusted breakeven on the
+     * exchange. Shared between the numeric-orderId path (getOrder) and the
+     * algo-id path (getUserTrades).
+     *
+     * Idempotency note: the polling loop only re-enters `_checkTpFill` for a
+     * given level while the corresponding `tpNOrderId` is non-null. This
+     * helper nulls that id as part of `updates`, so a second invocation for
+     * the same fill is structurally prevented upstream.
+     *
+     * @param {import('../domain/types').Position} position
+     * @param {1|2|3} level
+     * @param {string} orderId  — original tracked id (used as fallback in partialClose row)
+     * @param {{executedQty?:number, executedQuantity?:number, cumQuote?:number,
+     *          avgPrice?:number, price?:number, orderId?:string}} order
+     * @param {{algoPath?:boolean, fraction?:number}} [opts]
+     */
+    async _applyTpFill(position, level, orderId, order, opts = {}) {
+        const { algoPath = false, fraction = 0 } = opts;
+
+        // C4 fix: prefer executedQty from exchange over fraction-guess — this is
+        // the authoritative close quantity and stays correct when risk percents
+        // in config drift from the ones used when the ladder was placed.
+        const executedQty = Number(order.executedQty ?? order.executedQuantity ?? order.cumQuote ?? 0);
+        const fallbackQty = position.remainingQuantity * fraction;
+        const closeQtyRaw = Number.isFinite(executedQty) && executedQty > 0 ? executedQty : fallbackQty;
+        // Clamp to what's actually remaining to avoid negative remaining on rounding drift.
+        const closeQty = Math.min(Math.max(closeQtyRaw, 0), position.remainingQuantity);
+        const remaining = position.remainingQuantity - closeQty;
+
+        const fillPrice = Number(
+            order.avgPrice ?? order.price ??
+            (level === 1 ? position.tp1Price : level === 2 ? position.tp2Price : position.tp3Price)
+        );
+
+        // C2 fix: subtract taker fee, matching LiveBroker.closeMarket accounting.
+        const grossPnl = position.side === 'long'
+            ? (fillPrice - position.entryPrice) * closeQty
+            : (position.entryPrice - fillPrice) * closeQty;
+        const takerFeeRate = this._broker._takerFeeRate ?? 0.0004;
+        const fee = Math.abs(fillPrice * closeQty) * takerFeeRate;
+        const netPnl = grossPnl - fee;
+
+        const updates = {
+            remainingQuantity: remaining,
+            realizedPnl: position.realizedPnl + netPnl,
+            status: remaining > 0 ? 'PARTIAL' : 'CLOSED',
+            closedAt: remaining > 0 ? null : Date.now()
+        };
+
+        // C5 fix: null out the consumed tpNPrice too so a later mutation to
+        // slMovedToBreakeven can't accidentally re-arm the local exit branch.
+        if (level === 1) {
+            updates.tp1OrderId = null;
+            updates.tp1Price = null;
+            // Bug 2 fix: do NOT set slMovedToBreakeven / stopLoss here.
+            // Persist them only AFTER modifySlTp on the exchange succeeds
+            // (see block below). Otherwise the DB can drift ahead of the
+            // exchange state and we'll never retry the move.
+        } else if (level === 2) {
+            updates.tp2OrderId = null;
+            updates.tp2Price = null;
+        } else if (level === 3) {
+            updates.tp3OrderId = null;
+            updates.tp3Price = null;
+        }
+
+        // M6 fix: refresh exchangeTpActive flag once all ladder orders consumed.
+        const remainingTpIds = [
+            level === 1 ? null : position.tp1OrderId,
+            level === 2 ? null : position.tp2OrderId,
+            level === 3 ? null : position.tp3OrderId
+        ];
+        updates.exchangeTpActive = remainingTpIds.some((id) => Boolean(id));
+
+        const updated = updatePosition(position, updates);
+        await this._db.updatePosition(updated);
+        await this._db.insertPartialClose({
+            positionId: position.positionId,
+            tpLevel: level,
+            price: fillPrice,
+            quantity: closeQty,
+            pnl: netPnl,
+            orderId: order.orderId || orderId,
+            closedAt: Date.now()
+        });
+        this._replace(updated);
+
+        if (this._riskGuard && Number.isFinite(netPnl) && netPnl !== 0) {
+            try { await this._riskGuard.recordRealisedPnl(netPnl); }
+            catch (err) { logger.error('[PositionManager] riskGuard.recordRealisedPnl failed (poll path)', { message: err.message }); }
+        }
+
+        if (remaining <= 0) {
+            // Full close through the ladder — drop from in-memory map.
+            const arr = (this._positions.get(position.symbol) || [])
+                .filter((p) => p.positionId !== position.positionId);
+            this._positions.set(position.symbol, arr);
+            this._onEvent('positionClosed', { position: updated, reason: `TP${level}:exchange`, pnl: netPnl });
+        } else {
+            this._onEvent('partialClose', { position: updated, level, pnl: netPnl });
+        }
+
+        // C3 fix: breakeven move goes through public modifySlTp with the
+        // tracked slOrderId so the fallback cancels ONLY the old SL.
+        if (level === 1 && typeof this._broker.modifySlTp === 'function') {
+            try {
+                const beSl = this._computeBreakevenPrice(position, fillPrice);
+                // Safety distance check — SL must stay on the correct side of
+                // the current (fill) price with a 0.1% buffer to avoid reject.
+                const buffer = fillPrice * 0.001;
+                const isLongValid = position.side === 'long' && beSl != null && beSl < (fillPrice - buffer);
+                const isShortValid = position.side === 'short' && beSl != null && beSl > (fillPrice + buffer);
+
+                if (isLongValid || isShortValid) {
+                    if (algoPath) {
+                        logger.info('[PositionManager] BE move triggered after TP1 fill (algo path)', {
+                            positionId: position.positionId, symbol: position.symbol,
+                            slOrderId: position.slOrderId, entryPrice: position.entryPrice, beSl
+                        });
+                    } else {
+                        logger.info('[PositionManager] Moving exchange SL to fee-adjusted breakeven (poll path)', {
+                            symbol: position.symbol, slOrderId: position.slOrderId,
+                            entryPrice: position.entryPrice, beSl
+                        });
+                    }
+                    const res = await this._broker.modifySlTp({
+                        symbol: position.symbol,
+                        orderId: position.slOrderId,
+                        slTriggerPrice: beSl
+                    });
+
+                    // Bug 2 fix: only now — after the exchange confirms — mark
+                    // the breakeven move in DB / in-memory state. If modifySlTp
+                    // failed or was skipped, the next poll tick will retry because
+                    // slMovedToBreakeven is still false.
+                    if (res && res.success) {
+                        const currentRef = (this._positions.get(position.symbol) || [])
+                            .find(x => x.positionId === position.positionId) || updated;
+                        const patch = {
+                            slMovedToBreakeven: true,
+                            stopLoss: beSl
+                        };
+                        if (res.mode === 'replace' && res.slOrderId) {
+                            logger.info('[PositionManager] Updating slOrderId after polling replace-move', {
+                                symbol: position.symbol, old: position.slOrderId, new: res.slOrderId
+                            });
+                            patch.slOrderId = res.slOrderId;
+                        }
+                        const synced = updatePosition(currentRef, patch);
+                        await this._db.updatePosition(synced);
+                        this._replace(synced);
+                    } else {
+                        logger.warn('[PositionManager] modifySlTp did not confirm success; will retry', {
+                            symbol: position.symbol, res
+                        });
+                    }
+                } else {
+                    logger.warn('[PositionManager] Breakeven move skipped (poll path): price too close', {
+                        symbol: position.symbol, entryPrice: position.entryPrice, fillPrice
+                    });
+                }
+            } catch (err) {
+                logger.error('[PositionManager] Failed to move exchange SL to breakeven (poll path)', {
+                    symbol: position.symbol, message: err.message
+                });
+            }
         }
     }
 
@@ -829,13 +950,27 @@ class PositionManager {
         }
 
         const remaining = position.remainingQuantity - closeQty;
+
+        // Null out the consumed TP level so the UI removes its tick mark from
+        // the progress bar and the data grid shows '—' for the executed level.
+        const tpPriceKey = level === 1 ? 'tp1Price' : level === 2 ? 'tp2Price' : 'tp3Price';
+        const tpIdKey    = level === 1 ? 'tp1OrderId' : level === 2 ? 'tp2OrderId' : 'tp3OrderId';
+        const remainingTpIds = [
+            level === 1 ? null : position.tp1OrderId,
+            level === 2 ? null : position.tp2OrderId,
+            level === 3 ? null : position.tp3OrderId,
+        ];
+
         // Bug 2 fix: do NOT set slMovedToBreakeven / stopLoss optimistically.
         // They are persisted below only after the exchange confirms the SL move.
         const updated = updatePosition(position, {
             remainingQuantity: remaining,
             realizedPnl: position.realizedPnl + (fill.pnl || 0),
             status: remaining > 0 ? 'PARTIAL' : 'CLOSED',
-            closedAt: remaining > 0 ? null : Date.now()
+            closedAt: remaining > 0 ? null : Date.now(),
+            [tpPriceKey]: null,
+            [tpIdKey]: null,
+            exchangeTpActive: remainingTpIds.some(Boolean)
         });
 
         await this._db.updatePosition(updated);

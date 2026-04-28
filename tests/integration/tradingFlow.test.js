@@ -6,9 +6,9 @@ describe('Integration: Trading Flow', () => {
 
     beforeEach(() => {
         mockDb = {
-            insertMarketSnapshot: jest.fn(),
-            insertDecision: jest.fn(),
-            insertRiskEvent: jest.fn()
+            insertMarketSnapshot: jest.fn().mockResolvedValue(undefined),
+            insertDecision: jest.fn().mockResolvedValue(undefined),
+            insertRiskEvent: jest.fn().mockResolvedValue(undefined)
         };
         mockData = {
             getCandles: jest.fn().mockReturnValue(

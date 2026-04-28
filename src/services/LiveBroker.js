@@ -481,9 +481,9 @@ class LiveBroker {
             try {
                 const trigger = slTriggerPrice || tpTriggerPrice;
                 const modRes = await this._client.modifyTpSlOrder({
+                    symbol,
                     orderId: String(orderId),
                     triggerPrice: String(trigger),
-                    executePrice: '0',
                     triggerPriceType: 'MARK_PRICE'
                 });
                 const success = modRes?.success !== false;

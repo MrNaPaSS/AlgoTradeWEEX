@@ -117,7 +117,7 @@ describe('PositionManager — C8 Phase 2 polling', () => {
         expect(broker.cancelAllForSymbol).not.toHaveBeenCalled();
         // Breakeven modifySlTp called with tracked slOrderId
         expect(broker.modifySlTp).toHaveBeenCalledWith(expect.objectContaining({
-            symbol: 'BTCUSDT', orderId: 'sl-xyz', slTriggerPrice: 30000
+            symbol: 'BTCUSDT', orderId: 'sl-xyz', slTriggerPrice: 30024
         }));
     });
 

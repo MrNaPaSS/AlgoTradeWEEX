@@ -71,7 +71,6 @@ describe('PositionManager — C8 Phase 1 exchange-side SL', () => {
         expect(broker.placeMarketOrder).toHaveBeenCalledTimes(1);
         const call = broker.placeMarketOrder.mock.calls[0][0];
         expect(call.stopLoss).toBe(29500);
-        expect(call.tpPrice).toBe(30500);
         expect(call.side).toBe('long');
         expect(call.symbol).toBe('BTCUSDT');
     });

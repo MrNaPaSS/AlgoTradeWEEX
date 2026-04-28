@@ -81,9 +81,9 @@ describe('Integration: TP Ladder & Breakeven Move', () => {
             symbol: 'BTCUSDT',
             totalQty: 1,
             tp1Price: 51000,
-            tp1Pct: 0.5,
-            tp2Pct: 0.3,
-            tp3Pct: 0.2
+            tp1Qty: 0.5,
+            tp2Qty: 0.3,
+            tp3Qty: 0.2
         }));
         
         expect(pos.tp1OrderId).toBe('tp1-123');
@@ -110,7 +110,7 @@ describe('Integration: TP Ladder & Breakeven Move', () => {
         expect(clientMock.modifySlTp).toHaveBeenCalledWith(expect.objectContaining({
             symbol: 'BTCUSDT',
             orderId: 'sl-123',
-            slTriggerPrice: 50000 // Entry price
+            slTriggerPrice: 50040 // Fee-adjusted breakeven (entry * (1+fee)/(1-fee))
         }));
 
         const pos = pm.getOpen('BTCUSDT')[0];

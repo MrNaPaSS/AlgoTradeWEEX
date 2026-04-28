@@ -327,19 +327,19 @@ class WeexFuturesClient {
      * POST /capi/v3/modifyTpSlOrder
      * Required: { orderId, triggerPrice } ; optional: { executePrice, triggerPriceType }
      * Response: { success: boolean }
+     *
+     * `symbol` is accepted as an internal precision hint but is NOT sent to the API.
      */
-    async modifyTpSlOrder(params) {
-        const { symbol, triggerPrice, executePrice } = params;
+    async modifyTpSlOrder({ symbol, orderId, triggerPrice, executePrice, triggerPriceType }) {
         const precision = getAssetPrecision(symbol);
-        
-        const formatted = {
-            ...params,
-            triggerPrice: triggerPrice ? Number(triggerPrice).toFixed(precision.price) : undefined,
-            executePrice: (executePrice && executePrice !== '0') ? Number(executePrice).toFixed(precision.price) : undefined
-        };
 
-        logger.info('[WeexFutures] modifyTpSlOrder', formatted);
-        const res = await this._request('POST', ENDPOINTS.order.modifyTpSl, { data: formatted });
+        const data = { orderId: String(orderId) };
+        if (triggerPrice) data.triggerPrice = Number(triggerPrice).toFixed(precision.price);
+        if (executePrice && executePrice !== '0') data.executePrice = Number(executePrice).toFixed(precision.price);
+        if (triggerPriceType) data.triggerPriceType = triggerPriceType;
+
+        logger.info('[WeexFutures] modifyTpSlOrder', { orderId, triggerPrice, triggerPriceType });
+        const res = await this._request('POST', ENDPOINTS.order.modifyTpSl, { data });
         return res?.data || res;
     }
 
@@ -569,27 +569,6 @@ class WeexFuturesClient {
             }
         }
         return { cancelled, skipped };
-    }
-
-    /**
-     * C8 Phase 2: Modify TP/SL of an existing conditional order (breakeven move).
-     * Uses WEEX "Modify TP/SL Conditional Order" endpoint POST /capi/v3/order/tpSl.
-     *
-     * @param {Object} opts
-     * @param {string} opts.symbol
-     * @param {string} [opts.orderId]          — WEEX order id of the SL order to modify
-     * @param {number} [opts.slTriggerPrice]   — new SL trigger price
-     * @param {number} [opts.tpTriggerPrice]   — new TP trigger price
-     */
-    async modifySlTp({ symbol, orderId, slTriggerPrice, tpTriggerPrice }) {
-        const data = { symbol };
-        if (orderId)        data.orderId        = orderId;
-        if (slTriggerPrice) data.slTriggerPrice = String(slTriggerPrice);
-        if (tpTriggerPrice) data.tpTriggerPrice = String(tpTriggerPrice);
-
-        logger.info('[WeexFutures] modifySlTp', { symbol, orderId, slTriggerPrice, tpTriggerPrice });
-        const res = await this._request('POST', ENDPOINTS.order.modifySlTp, { data, retries: 1 });
-        return res?.data || res;
     }
 
     /**
