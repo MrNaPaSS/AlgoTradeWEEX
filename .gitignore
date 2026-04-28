@@ -23,17 +23,5 @@ Thumbs.db
 *.tmp
 *.temp
 
-# Ruflo / Claude-Flow — dev tool для Claude Code (не runtime AlgoTrade).
 # Конфигурация (.claude/, CLAUDE.md, .mcp.json, agents/) трекается, runtime — нет.
-.claude-flow/data/
-.claude-flow/logs/
-.claude-flow/sessions/
-.claude-flow/*.db
-.claude-flow/*.sqlite*
-.claude-flow/*.pid
-.claude-flow/*.sock
-.claude/**/*.db
-.claude/**/*.sqlite*
-.claude/**/cache/
-.swarm/
 
