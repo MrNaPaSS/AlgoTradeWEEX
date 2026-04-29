@@ -24,7 +24,7 @@ if (!positionId) {
 
     // Show before
     const before = db._db.exec(
-        `SELECT position_id, tp1_order_id, tp1_price, exchange_tp_active, sl_moved_to_breakeven FROM positions WHERE position_id='${positionId}'`
+        `SELECT position_id, tp1_order_id, tp1_price, sl_moved_to_breakeven FROM positions WHERE position_id='${positionId}'`
     );
     if (!before[0]?.values?.length) {
         console.error(`Position ${positionId} not found.`);
@@ -33,16 +33,16 @@ if (!positionId) {
     const cols = before[0].columns;
     console.log('Before:', Object.fromEntries(cols.map((c, i) => [c, before[0].values[0][i]])));
 
-    // Clear TP1 fields
+    // Clear TP1 fields (exchange_tp_active is in-memory only, not a DB column)
     await db.run(
-        `UPDATE positions SET tp1_order_id=NULL, tp1_price=NULL, exchange_tp_active=0 WHERE position_id=?`,
+        `UPDATE positions SET tp1_order_id=NULL, tp1_price=NULL WHERE position_id=?`,
         [positionId]
     );
     db._persistIfDirty();
 
     // Show after
     const after = db._db.exec(
-        `SELECT position_id, tp1_order_id, tp1_price, exchange_tp_active, sl_moved_to_breakeven FROM positions WHERE position_id='${positionId}'`
+        `SELECT position_id, tp1_order_id, tp1_price, sl_moved_to_breakeven FROM positions WHERE position_id='${positionId}'`
     );
     console.log('After: ', Object.fromEntries(cols.map((c, i) => [c, after[0].values[0][i]])));
     console.log('Done. Restart the bot.');
