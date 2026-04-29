@@ -421,15 +421,8 @@ ${position.slMovedToBreakeven ? '🛡️ SL перемещён в безубыт
         await this.sendMessage(`⚠️ *ОШИБКА*\n━━━━━━━━━━━━━━━\n${text}`);
     }
 
-    async notifyDecision(decision) {
-        const outcomeEmoji = decision.outcome === 'EXECUTE' ? '✅' : '🚫';
-        const message = `${outcomeEmoji} *РЕШЕНИЕ АРБИТРА*
-━━━━━━━━━━━━━━━
-📊 ${decision.symbol} → *${decision.outcome}* (${decision.direction})
-🎚 Уверенность: ${this._fmtNum((decision.confidence || 0) * 100, 0)}%
-🤖 LLM: ${decision.llmInvoked ? 'вызван' : 'пропущено'}
-🧠 ${decision.arbiterReasoning || '—'}`;
-        await this.sendMessage(message);
+    async notifyDecision(_decision) {
+        // Arbiter decision details are internal — not sent to users.
     }
 }
 
