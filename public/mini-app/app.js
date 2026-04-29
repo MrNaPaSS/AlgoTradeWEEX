@@ -84,6 +84,30 @@
             // Security info
             securityText1: 'Keys are encrypted with *AES-256-GCM* and stored server-side only',
             securityText2: 'Permissions: *Futures Trade*. IP binding is not required',
+            // Placeholders
+            phApiKey: 'Paste API Key',
+            phSecretKey: 'Paste Secret Key',
+            phPassphrase: 'Paste Passphrase',
+            // Stats sub-text
+            winOf: ' of ',
+            totalLabel: 'Total: ',
+            // Pause/resume
+            resume: 'Resume',
+            // Empty state
+            noPositions: 'No open positions',
+            waitingSignal: 'Trading engine awaiting signal',
+            // Position card labels
+            posEntry: 'Entry',
+            posVolume: 'Volume',
+            posLiquid: 'Liq.',
+            posMargin: 'Margin',
+            posBreakeven: '·BE',
+            editLevels: 'Edit levels (price in USDT)',
+            save: 'Save',
+            closePosition: 'Close position',
+            // Confirm dialogs
+            confirmClosePos: 'Close position at market? This action is irreversible.',
+            confirmCloseAll: 'Close all positions? This action is irreversible.',
         },
         ru: {
             navDashboard: 'Дашборд', navRisk: 'Риск', navApi: 'API',
@@ -135,6 +159,24 @@
             closing: 'Закрываем...',
             securityText1: 'Ключи шифруются *AES-256-GCM* и хранятся только на сервере',
             securityText2: 'Права: *Futures Trade*. IP-привязка не обязательна',
+            phApiKey: 'Вставьте API Key',
+            phSecretKey: 'Вставьте Secret Key',
+            phPassphrase: 'Вставьте Passphrase',
+            winOf: ' из ',
+            totalLabel: 'Всего: ',
+            resume: 'Возобновить',
+            noPositions: 'Нет открытых позиций',
+            waitingSignal: 'Торговый движок ожидает сигнала',
+            posEntry: 'Вход',
+            posVolume: 'Объём',
+            posLiquid: 'Ликвид.',
+            posMargin: 'Маржа',
+            posBreakeven: '·б/у',
+            editLevels: 'Изменить уровни (цена в USDT)',
+            save: 'Сохранить',
+            closePosition: 'Закрыть позицию',
+            confirmClosePos: 'Закрыть позицию по рынку? Действие необратимо.',
+            confirmCloseAll: 'Закрыть все позиции? Действие необратимо.',
         }
     };
 
@@ -150,6 +192,36 @@
         });
         var toggle = document.getElementById('lang-toggle');
         if (toggle) toggle.textContent = _lang === 'en' ? 'RU' : 'EN';
+
+        // Input placeholders
+        var apiKeyInput = document.getElementById('inp-apikey');
+        if (apiKeyInput) apiKeyInput.placeholder = _t('phApiKey');
+        var secretInput = document.getElementById('inp-secret');
+        if (secretInput) secretInput.placeholder = _t('phSecretKey');
+        var passInput = document.getElementById('inp-pass');
+        if (passInput) passInput.placeholder = _t('phPassphrase');
+
+        // Security info rows with inline bold formatting
+        function secHtml(key) {
+            return _t(key).replace(/\*(.*?)\*/g, '<strong>$1</strong>');
+        }
+        var s1 = document.getElementById('security-info-1');
+        if (s1) s1.innerHTML = secHtml('securityText1');
+        var s2 = document.getElementById('security-info-2');
+        if (s2) s2.innerHTML = secHtml('securityText2');
+
+        // Dynamic labels that refresh() also sets — keep in sync on lang switch
+        var badgeLbl = document.getElementById('badge-label');
+        if (badgeLbl) badgeLbl.textContent = _paused ? _t('pause') : _t('statusActive');
+        var pauseLbl = document.getElementById('pause-label');
+        if (pauseLbl) pauseLbl.textContent = _paused ? _t('resume') : _t('pause');
+        var closeAllLbl = document.getElementById('close-all-label');
+        if (closeAllLbl) closeAllLbl.textContent = _t('closeAll');
+
+        // Re-render positions so empty-state text + card labels switch language
+        renderPositions(_lastPositions);
+        // Re-render stats so period label switches language
+        renderStats();
     }
 
     async function api(method, path, body) {
@@ -235,6 +307,7 @@
     let _stats30d     = { totalTrades: 0, winRate: 0, totalPnl: 0 };
     let _statsAllTime = { totalTrades: 0, winRate: 0, totalPnl: 0 };
     let _statsPeriod  = 'today';
+    let _lastPositions = [];
 
     function _statsFor(period) {
         if (period === '7d')  return _stats7d;
@@ -287,14 +360,14 @@
         }
         if (winSub) {
             winSub.textContent = (s.totalTrades || 0) > 0
-                ? ((s.winTrades || 0) + ' из ' + s.totalTrades)
+                ? ((s.winTrades || 0) + _t('winOf') + s.totalTrades)
                 : '';
         }
         if (pnlSub) {
             var all = _statsAllTime;
             var allPnl = Number(all.totalPnl || 0);
             pnlSub.textContent = (_statsPeriod !== 'all' && (all.totalTrades || 0) > 0)
-                ? ('всего: ' + (allPnl >= 0 ? '+' : '−') + '$' + Math.abs(allPnl).toFixed(2))
+                ? (_t('totalLabel') + (allPnl >= 0 ? '+' : '−') + '$' + Math.abs(allPnl).toFixed(2))
                 : '';
         }
 
@@ -572,7 +645,7 @@
             }
         } catch (err) {
             hapticNotify('error');
-            toast(err.message || 'Ошибка сохранения', 'err');
+            toast(err.message || _t('saveError'), 'err');
         } finally {
             btn.disabled = false;
             btnText.textContent = _t('saveSettings');
@@ -720,20 +793,21 @@
 
             if (_paused) {
                 badge.className   = 'status-badge badge-paused';
-                badgeLbl.textContent = 'Пауза';
+                badgeLbl.textContent = _t('pause');
                 iconPause.classList.add('hidden');
                 iconPlay.classList.remove('hidden');
-                pauseLbl.textContent = 'Возобновить';
+                pauseLbl.textContent = _t('resume');
             } else {
                 badge.className   = 'status-badge badge-active';
-                badgeLbl.textContent = 'Активен';
+                badgeLbl.textContent = _t('statusActive');
                 iconPause.classList.remove('hidden');
                 iconPlay.classList.add('hidden');
-                pauseLbl.textContent = 'Пауза';
+                pauseLbl.textContent = _t('pause');
             }
 
             // Positions
             var positions = data.positions || [];
+            _lastPositions = positions;
             setEl('pos-count', positions.length);
             renderPositions(positions);
 
@@ -781,8 +855,8 @@
                 '<div class="empty-icon-box">' +
                 '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>' +
                 '</div>' +
-                '<p class="empty-title">Нет открытых позиций</p>' +
-                '<p class="empty-sub">Торговый движок ожидает сигнала</p>' +
+                '<p class="empty-title">' + _t('noPositions') + '</p>' +
+                '<p class="empty-sub">' + _t('waitingSignal') + '</p>' +
                 '</div>';
             return;
         }
@@ -868,11 +942,11 @@
                 '</div>' +
                 '<div class="pnl-bar" data-action="toggle"><div class="pnl-bar-fill" style="width:' + progress + '%"></div>' + ticksHtml + '</div>' +
                 '<div class="pos-data" data-action="toggle">' +
-                    '<div class="pos-datum"><span class="pos-datum-label">Вход</span><span class="pos-datum-val">$' + fmt(p.entryPrice, 4) + '</span></div>' +
-                    '<div class="pos-datum"><span class="pos-datum-label">Объём</span><span class="pos-datum-val">' + fmt(p.remainingQuantity, 4) + '</span></div>' +
-                    '<div class="pos-datum"><span class="pos-datum-label">Ликвид.</span><span class="pos-datum-val val-sl">' + (p.liquidatePrice ? '$' + fmt(p.liquidatePrice, 4) : '—') + '</span></div>' +
-                    '<div class="pos-datum"><span class="pos-datum-label">Маржа</span><span class="pos-datum-val">' + (p.marginSize ? '$' + fmt(p.marginSize, 2) : '—') + '</span></div>' +
-                    '<div class="pos-datum"><span class="pos-datum-label">SL' + (p.slMovedToBreakeven ? '·б/у' : '') + '</span><span class="pos-datum-val val-sl">' + (p.stopLoss ? '$' + fmt(p.stopLoss, 4) : '—') + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">' + _t('posEntry') + '</span><span class="pos-datum-val">$' + fmt(p.entryPrice, 4) + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">' + _t('posVolume') + '</span><span class="pos-datum-val">' + fmt(p.remainingQuantity, 4) + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">' + _t('posLiquid') + '</span><span class="pos-datum-val val-sl">' + (p.liquidatePrice ? '$' + fmt(p.liquidatePrice, 4) : '—') + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">' + _t('posMargin') + '</span><span class="pos-datum-val">' + (p.marginSize ? '$' + fmt(p.marginSize, 2) : '—') + '</span></div>' +
+                    '<div class="pos-datum"><span class="pos-datum-label">SL' + (p.slMovedToBreakeven ? _t('posBreakeven') : '') + '</span><span class="pos-datum-val val-sl">' + (p.stopLoss ? '$' + fmt(p.stopLoss, 4) : '—') + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">TP1</span><span class="pos-datum-val val-tp">' + (p.tp1Price ? '$' + fmt(p.tp1Price, 4) : '—') + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">TP2</span><span class="pos-datum-val val-tp">' + (p.tp2Price ? '$' + fmt(p.tp2Price, 4) : '—') + '</span></div>' +
                     '<div class="pos-datum"><span class="pos-datum-label">TP3</span><span class="pos-datum-val val-tp">' + (p.tp3Price ? '$' + fmt(p.tp3Price, 4) : '—') + '</span></div>' +
@@ -880,7 +954,7 @@
                 // Expanded edit panel — slides down via CSS max-height transition.
                 '<div class="pos-expand">' +
                     '<div class="pos-expand-inner">' +
-                        '<p class="pos-edit-label">Изменить уровни (цена в USDT)</p>' +
+                        '<p class="pos-edit-label">' + _t('editLevels') + '</p>' +
                         '<div class="pos-edit-grid">' +
                             '<label class="pos-edit-field"><span class="pos-edit-name val-sl">SL</span>' +
                                 '<input type="number" inputmode="decimal" step="any" data-edit="stopLoss" value="' + escapeHtml(String(slEdit)) + '" placeholder="—"></label>' +
@@ -894,11 +968,11 @@
                         '<div class="pos-edit-actions">' +
                             '<button type="button" class="btn-edit-save" data-action="save">' +
                                 '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
-                                '<span>Сохранить</span>' +
+                                '<span>' + _t('save') + '</span>' +
                             '</button>' +
                             '<button type="button" class="btn-edit-close" data-action="close">' +
                                 '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-                                '<span>Закрыть позицию</span>' +
+                                '<span>' + _t('closePosition') + '</span>' +
                             '</button>' +
                         '</div>' +
                     '</div>' +
@@ -964,7 +1038,7 @@
         if (closeBtn) {
             e.stopPropagation();
             haptic('heavy');
-            var ok = await showConfirm('Закрыть позицию по рынку? Действие необратимо.');
+            var ok = await showConfirm(_t('confirmClosePos'));
             if (!ok) return;
             closeBtn.disabled = true;
             try {
@@ -1035,7 +1109,7 @@
     // ── Emergency close ───────────────────────────────────────────────────────
     document.getElementById('btn-close-all').addEventListener('click', async function () {
         haptic('heavy');
-        var confirmed = await showConfirm('Закрыть все позиции? Действие необратимо.');
+        var confirmed = await showConfirm(_t('confirmCloseAll'));
         if (!confirmed) return;
 
         var btn = document.getElementById('btn-close-all');
@@ -1057,7 +1131,7 @@
             toast(err.message || 'Ошибка закрытия', 'err');
         } finally {
             btn.disabled = false;
-            lbl.textContent = 'Закрыть всё';
+            lbl.textContent = _t('closeAll');
         }
     });
 
@@ -1110,7 +1184,7 @@
     if (disconnectBtn) {
         disconnectBtn.addEventListener('click', async function () {
             haptic('heavy');
-            var ok = await showConfirm('Отключить аккаунт? API ключи будут удалены.');
+            var ok = await showConfirm(_t('confirmDisconnect'));
             if (!ok) return;
             try {
                 await api('DELETE', '/me');
