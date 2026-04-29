@@ -155,9 +155,11 @@ class TelegramService {
 
     async _sendWelcomeByStatus(chatId, userId, request, lang) {
         const miniAppUrl = config.multiUser?.miniAppUrl;
+        logger.info('[Telegram] _sendWelcomeByStatus', { request, weex_uid: request?.weex_uid, status: request?.status });
         // Check if user has submitted UID yet
         if (!request || !request.weex_uid) {
             // New user: hasn't submitted UID yet
+            logger.info('[Telegram] sending newUserPrompt (no weex_uid)');
             await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
         } else if (request.status === 'approved') {
             // User approved: ready to use app
@@ -267,6 +269,7 @@ class TelegramService {
             }
 
             const request = this._db ? await this._db.getAccessRequest(userId).catch(() => null) : null;
+            logger.info('[Telegram] lang_select: request object', { request });
             await this._sendWelcomeByStatus(chatId, userId, request, lang);
             return;
         }
