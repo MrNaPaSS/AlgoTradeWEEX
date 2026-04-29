@@ -19,6 +19,9 @@
 <!-- Toast container -->
 <div id="toast-container" role="status" aria-live="polite"></div>
 
+<!-- Language toggle -->
+<button id="lang-toggle" class="lang-toggle" aria-label="Switch language">EN</button>
+
 <!-- ══════════════════════════════════
      BOTTOM NAV
 ══════════════════════════════════ -->
@@ -31,9 +34,9 @@
                 <rect x="17" y="3" width="4" height="18" rx="1.5"/>
             </svg>
         </span>
-        <span class="nav-label">Дашборд</span>
+        <span class="nav-label" data-i18n="navDashboard">Dashboard</span>
     </button>
-    <button class="nav-btn" data-screen="settings" onclick="App.show('settings')" aria-label="Риск">
+    <button class="nav-btn" data-screen="settings" onclick="App.show('settings')" aria-label="Risk">
         <span class="nav-icon">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
                 <line x1="4" y1="6" x2="20" y2="6"/>
@@ -44,9 +47,9 @@
                 <circle cx="11" cy="18" r="2.5" fill="currentColor" stroke="none"/>
             </svg>
         </span>
-        <span class="nav-label">Риск</span>
+        <span class="nav-label" data-i18n="navRisk">Risk</span>
     </button>
-    <button class="nav-btn" data-screen="onboarding" onclick="App.show('onboarding')" aria-label="API Ключи">
+    <button class="nav-btn" data-screen="onboarding" onclick="App.show('onboarding')" aria-label="API Keys">
         <span class="nav-icon">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="7.5" cy="15.5" r="4.5"/>

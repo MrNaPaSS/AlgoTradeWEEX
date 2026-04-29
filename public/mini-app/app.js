@@ -24,6 +24,134 @@
     // Falls back to same-origin when config is missing (e.g. local dev).
     const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '';
 
+    // ── i18n ──────────────────────────────────────────────────────────────────
+    var I18N = {
+        en: {
+            // Nav
+            navDashboard: 'Dashboard', navRisk: 'Risk', navApi: 'API',
+            // Onboarding connected
+            apiConnected: 'API Connected',
+            apiConnectedSub: 'Your WEEX account is linked and trading engine is active',
+            statusActive: 'Active', statusPaused: 'Paused',
+            availableBalance: 'Available balance',
+            openPositions: 'Open positions',
+            tradingStatus: 'Trading status',
+            openDashboard: 'Open dashboard',
+            disconnectKeys: 'Disconnect and delete API keys',
+            // Onboarding form
+            connectTitle: 'Connection',
+            connectSub: 'Enter API keys to activate the trading engine',
+            connectBtn: 'Connect account',
+            // Risk screen
+            riskTitle: 'Management',
+            riskSub: 'Risk parameters',
+            maxDailyLoss: 'Max daily loss',
+            maxPositions: 'Max positions simultaneously',
+            leverage: 'Leverage',
+            positionSize: 'Position size from balance',
+            tradedInstruments: 'Traded instruments',
+            saveSettings: 'Save settings',
+            disconnectAccount: 'Disconnect account',
+            // Dashboard
+            today: 'Today', d7: '7 days', d30: 'Month', all: 'All time',
+            totalTrades: 'Total trades', winRate: 'Win rate',
+            positions: 'Positions', pause: 'Pause', closeAll: 'Close all',
+            // Period labels
+            periodToday: 'today', period7d: 'last 7 days', period30d: 'last month', periodAll: 'all time',
+            // Toasts
+            fillAllFields: 'Fill in all three fields',
+            checkingKeys: 'Checking API keys...',
+            connected: 'Connected! Balance: $',
+            connError: 'Connection error',
+            netError: 'Network error',
+            selectSymbol: 'Select at least one symbol',
+            settingsSaved: 'Settings saved',
+            saveError: 'Save error',
+            accountDisconnected: 'Account disconnected',
+            nothingToSave: 'Nothing to save',
+            levelsUpdated: 'Levels updated',
+            saveFailed: 'Failed to save',
+            posClosed: 'Position closed',
+            closeFailed: 'Failed to close',
+            tradingResumed: 'Trading resumed',
+            tradingPaused: 'Trading paused',
+            closedCount: 'Positions closed: ',
+            closeError: 'Close error',
+            keysDeleted: 'API keys deleted',
+            confirmDisconnect: 'Disconnect account? API keys will be deleted.',
+            saving: 'Saving...',
+            closing: 'Closing...',
+            // Security info
+            securityText1: 'Keys are encrypted with *AES-256-GCM* and stored server-side only',
+            securityText2: 'Permissions: *Futures Trade*. IP binding is not required',
+        },
+        ru: {
+            navDashboard: 'Дашборд', navRisk: 'Риск', navApi: 'API',
+            apiConnected: 'API подключён',
+            apiConnectedSub: 'Ваш WEEX аккаунт привязан и торговый движок активен',
+            statusActive: 'Активен', statusPaused: 'Пауза',
+            availableBalance: 'Доступный баланс',
+            openPositions: 'Открытых позиций',
+            tradingStatus: 'Статус торговли',
+            openDashboard: 'Открыть дашборд',
+            disconnectKeys: 'Отключить и удалить API ключи',
+            connectTitle: 'Подключение',
+            connectSub: 'Введите API ключи для активации торгового движка',
+            connectBtn: 'Подключить аккаунт',
+            riskTitle: 'Управление',
+            riskSub: 'Параметры риска',
+            maxDailyLoss: 'Макс. дневной убыток',
+            maxPositions: 'Макс. позиций одновременно',
+            leverage: 'Кредитное плечо',
+            positionSize: 'Размер позиции от баланса',
+            tradedInstruments: 'Торгуемые инструменты',
+            saveSettings: 'Сохранить настройки',
+            disconnectAccount: 'Отключить аккаунт',
+            today: 'Сегодня', d7: '7 дней', d30: 'Месяц', all: 'Всё время',
+            totalTrades: 'Всего сделок', winRate: 'Винрейт',
+            positions: 'Позиции', pause: 'Пауза', closeAll: 'Закрыть всё',
+            periodToday: 'сегодня', period7d: 'за 7 дней', period30d: 'за месяц', periodAll: 'за всё время',
+            fillAllFields: 'Заполните все три поля',
+            checkingKeys: 'Проверяем API ключи...',
+            connected: 'Подключено! Баланс: $',
+            connError: 'Ошибка подключения',
+            netError: 'Ошибка сети',
+            selectSymbol: 'Выберите хотя бы один символ',
+            settingsSaved: 'Настройки сохранены',
+            saveError: 'Ошибка сохранения',
+            accountDisconnected: 'Аккаунт отключён',
+            nothingToSave: 'Нечего сохранять',
+            levelsUpdated: 'Уровни обновлены',
+            saveFailed: 'Не удалось сохранить',
+            posClosed: 'Позиция закрыта',
+            closeFailed: 'Не удалось закрыть',
+            tradingResumed: 'Торговля возобновлена',
+            tradingPaused: 'Торговля приостановлена',
+            closedCount: 'Закрыто позиций: ',
+            closeError: 'Ошибка закрытия',
+            keysDeleted: 'API ключи удалены',
+            confirmDisconnect: 'Отключить аккаунт? API ключи будут удалены.',
+            saving: 'Сохраняем...',
+            closing: 'Закрываем...',
+            securityText1: 'Ключи шифруются *AES-256-GCM* и хранятся только на сервере',
+            securityText2: 'Права: *Futures Trade*. IP-привязка не обязательна',
+        }
+    };
+
+    var _lang = localStorage.getItem('algotrade_lang') || 'en';
+
+    function _t(key) {
+        return (I18N[_lang] || I18N.en)[key] || (I18N.en[key] || key);
+    }
+
+    function _applyI18n() {
+        document.querySelectorAll('[data-i18n]').forEach(function (el) {
+            el.textContent = _t(el.getAttribute('data-i18n'));
+        });
+        var toggle = document.getElementById('lang-toggle');
+        if (toggle) toggle.textContent = _lang === 'en' ? 'RU' : 'EN';
+    }
+
     async function api(method, path, body) {
         const opts = {
             method,
@@ -115,10 +243,10 @@
         return _statsToday;
     }
     function _periodLabel(period) {
-        if (period === '7d')  return 'за 7 дней';
-        if (period === '30d') return 'за месяц';
-        if (period === 'all') return 'за всё время';
-        return 'сегодня';
+        if (period === '7d')  return _t('period7d');
+        if (period === '30d') return _t('period30d');
+        if (period === 'all') return _t('periodAll');
+        return _t('periodToday');
     }
 
     // Render all three stat tiles for the currently selected period.
@@ -207,8 +335,8 @@
             if (header) {
                 var title = header.querySelector('.screen-title');
                 var sub = header.querySelector('.screen-sub');
-                if (title) title.textContent = 'API подключён';
-                if (sub) sub.textContent = 'Ваш WEEX аккаунт привязан и торговый движок активен';
+                if (title) title.textContent = _t('apiConnected');
+                if (sub) sub.textContent = _t('apiConnectedSub');
             }
             var uEl = document.getElementById('connected-username');
             if (uEl && profile) uEl.textContent = profile.username ? '@' + profile.username : ('ID ' + (profile.userId || ''));
@@ -222,7 +350,7 @@
             if (pEl) pEl.textContent = positionsCount != null ? String(positionsCount) : '0';
             var sEl = document.getElementById('connected-status');
             if (sEl) {
-                sEl.textContent = paused ? 'Пауза' : 'Активен';
+                sEl.textContent = paused ? _t('statusPaused') : _t('statusActive');
                 sEl.style.color = paused ? '#FFB547' : '#00D97E';
             }
         } else {
@@ -232,8 +360,8 @@
             if (header) {
                 var title2 = header.querySelector('.screen-title');
                 var sub2 = header.querySelector('.screen-sub');
-                if (title2) title2.textContent = 'Подключение';
-                if (sub2) sub2.textContent = 'Введите API ключи для активации торгового движка';
+                if (title2) title2.textContent = _t('connectTitle');
+                if (sub2) sub2.textContent = _t('connectSub');
             }
         }
     }
@@ -323,7 +451,7 @@
 
         if (!apiKey || !secretKey || !passphrase) {
             hapticNotify('error');
-            toast('Заполните все три поля', 'err');
+            toast(_t('fillAllFields'), 'err');
             return;
         }
 
@@ -331,13 +459,13 @@
         btnText.classList.add('hidden');
         btnArrow.classList.add('hidden');
         spinner.classList.remove('hidden');
-        toast('Проверяем API ключи...', 'info', 10000);
+        toast(_t('checkingKeys'), 'info', 10000);
 
         try {
             var data = await api('POST', '/register', { apiKey, secretKey, passphrase });
             if (data.success) {
                 hapticNotify('success');
-                toast('Подключено! Баланс: $' + Number(data.balance).toFixed(2), 'ok', 4000);
+                toast(_t('connected') + Number(data.balance).toFixed(2), 'ok', 4000);
                 document.getElementById('inp-apikey').value = '';
                 document.getElementById('inp-secret').value = '';
                 document.getElementById('inp-pass').value   = '';
@@ -367,11 +495,11 @@
                 setTimeout(function () { showScreen('dashboard'); }, 800);
             } else {
                 hapticNotify('error');
-                toast(data.error || 'Ошибка подключения', 'err');
+                toast(data.error || _t('connError'), 'err');
             }
         } catch (err) {
             hapticNotify('error');
-            toast(err.message || 'Ошибка сети', 'err');
+            toast(err.message || _t('netError'), 'err');
         } finally {
             btn.disabled = false;
             btnText.classList.remove('hidden');
@@ -414,12 +542,12 @@
         var btn = document.getElementById('btn-save-settings');
         var btnText = btn.querySelector('.btn-text');
         btn.disabled = true;
-        btnText.textContent = 'Сохраняем...';
+        btnText.textContent = _t('saving');
 
         try {
             var symbols = Array.from(document.querySelectorAll('#symbols-grid input:checked')).map(function (c) { return c.value; });
             if (symbols.length === 0) {
-                toast('Выберите хотя бы один символ', 'err');
+                toast(_t('selectSymbol'), 'err');
                 return;
             }
 
@@ -435,7 +563,7 @@
 
             if (results[0].success && results[1].success) {
                 hapticNotify('success');
-                toast('Настройки сохранены', 'ok');
+                toast(_t('settingsSaved'), 'ok');
                 // Refresh settings screen from server so sliders reflect the
                 // canonical (validated/clamped) values, not the stale inputs.
                 try { await loadSettings(); } catch (_) { /* non-fatal */ }
@@ -447,20 +575,20 @@
             toast(err.message || 'Ошибка сохранения', 'err');
         } finally {
             btn.disabled = false;
-            btnText.textContent = 'Сохранить настройки';
+            btnText.textContent = _t('saveSettings');
         }
     });
 
     // ── Delete account ────────────────────────────────────────────────────────
     document.getElementById('btn-delete-account').addEventListener('click', async function () {
         haptic('heavy');
-        var confirmed = await showConfirm('Отключить аккаунт? API ключи будут удалены.');
+        var confirmed = await showConfirm(_t('confirmDisconnect'));
         if (!confirmed) return;
 
         try {
             await api('DELETE', '/me');
             hapticNotify('warning');
-            toast('Аккаунт отключён', 'info');
+            toast(_t('accountDisconnected'), 'info');
             setTimeout(function () { showScreen('onboarding'); }, 1000);
         } catch (err) {
             toast(err.message || 'Ошибка', 'err');
@@ -812,13 +940,13 @@
                     if (v !== '') body[inp.getAttribute('data-edit')] = Number(v);
                 });
                 if (Object.keys(body).length === 0) {
-                    toast('Нечего сохранять', 'info');
+                    toast(_t('nothingToSave'), 'info');
                     return;
                 }
                 var res = await api('PATCH', '/me/positions/' + encodeURIComponent(pid), body);
                 if (res && res.success) {
                     hapticNotify('success');
-                    toast('Уровни обновлены', 'ok');
+                    toast(_t('levelsUpdated'), 'ok');
                     delete _editDraft[pid];
                     await refresh();
                 } else {
@@ -826,7 +954,7 @@
                 }
             } catch (err) {
                 hapticNotify('error');
-                toast(err.message || 'Не удалось сохранить', 'err', 5000);
+                toast(err.message || _t('saveFailed'), 'err', 5000);
             } finally {
                 saveBtn.disabled = false;
             }
@@ -843,7 +971,7 @@
                 var res2 = await api('POST', '/me/positions/' + encodeURIComponent(pid) + '/close');
                 if (res2 && res2.success) {
                     hapticNotify('success');
-                    toast('Позиция закрыта', 'ok');
+                    toast(_t('posClosed'), 'ok');
                     delete _editDraft[pid];
                     _expandedPid = null;
                     await refresh();
@@ -852,7 +980,7 @@
                 }
             } catch (err) {
                 hapticNotify('error');
-                toast(err.message || 'Не удалось закрыть', 'err', 5000);
+                toast(err.message || _t('closeFailed'), 'err', 5000);
             } finally {
                 closeBtn.disabled = false;
             }
@@ -895,7 +1023,7 @@
         try {
             await api('POST', wasPaused ? '/me/resume' : '/me/pause');
             await refresh();
-            toast(wasPaused ? 'Торговля возобновлена' : 'Торговля приостановлена', 'info');
+            toast(wasPaused ? _t('tradingResumed') : _t('tradingPaused'), 'info');
         } catch (err) {
             hapticNotify('error');
             toast(err.message || 'Ошибка', 'err');
@@ -913,13 +1041,13 @@
         var btn = document.getElementById('btn-close-all');
         var lbl = document.getElementById('close-all-label');
         btn.disabled = true;
-        lbl.textContent = 'Закрываем...';
+        lbl.textContent = _t('closing');
 
         try {
             var res = await api('POST', '/me/close-all');
             if (res.success) {
                 hapticNotify('success');
-                toast('Закрыто позиций: ' + res.closed, 'ok');
+                toast(_t('closedCount') + res.closed, 'ok');
                 await refresh();
             } else {
                 throw new Error(res.error || 'Ошибка');
@@ -935,6 +1063,7 @@
 
     // ── Init ──────────────────────────────────────────────────────────────────
     async function init() {
+        _applyI18n();
         // Probe profile first. Longer timeout (8s) — WEEX REST sometimes needs a moment.
         const controller = new AbortController();
         const timeout = setTimeout(function () { controller.abort(); }, 8000);
@@ -989,12 +1118,23 @@
                 _hasKeys = false;
                 _lastProfile = null;
                 renderOnboardingState(false);
-                toast('API ключи удалены', 'info');
+                toast(_t('keysDeleted'), 'info');
                 showScreen('onboarding');
             } catch (err) {
                 hapticNotify('error');
                 toast(err.message || 'Ошибка', 'err');
             }
+        });
+    }
+
+    // ── Language toggle ───────────────────────────────────────────────────────
+    var langToggle = document.getElementById('lang-toggle');
+    if (langToggle) {
+        langToggle.addEventListener('click', function () {
+            _lang = _lang === 'en' ? 'ru' : 'en';
+            localStorage.setItem('algotrade_lang', _lang);
+            _applyI18n();
+            haptic('light');
         });
     }
 

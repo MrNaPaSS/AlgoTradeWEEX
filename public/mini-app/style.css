@@ -103,6 +103,31 @@ body::after {
 .hidden { display: none !important; }
 
 /* ══════════════════════════════════════════════════════════
+   LANGUAGE TOGGLE
+══════════════════════════════════════════════════════════ */
+.lang-toggle {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 1000;
+    background: rgba(255,255,255,0.08);
+    color: #8A94A8;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    line-height: 1.6;
+    transition: background 0.2s, color 0.2s;
+}
+.lang-toggle:hover {
+    background: rgba(255,255,255,0.14);
+    color: #E8EEF8;
+}
+
+/* ══════════════════════════════════════════════════════════
    BOTTOM NAVIGATION
 ══════════════════════════════════════════════════════════ */
 .bottom-nav {

@@ -257,6 +257,24 @@ class Database {
             }
         }
 
+        // v8: language preference in access_requests
+        const arCols = new Set();
+        const arRes = this._db.exec('PRAGMA table_info(access_requests)');
+        if (arRes[0] && arRes[0].values) {
+            for (const row of arRes[0].values) arCols.add(row[1]);
+        }
+        if (!arCols.has('language')) {
+            try {
+                this._db.run("ALTER TABLE access_requests ADD COLUMN language TEXT DEFAULT 'en'");
+                this._markDirty();
+                logger.info('[Database] migration v8: added access_requests.language');
+            } catch (err) {
+                if (!/duplicate column/i.test(err.message)) {
+                    logger.error('[Database] migration v8 failed', { message: err.message });
+                }
+            }
+        }
+
         // v7: access_requests table for Telegram onboarding flow
         const accessTableExists = this._db.exec(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='access_requests'"
@@ -668,6 +686,20 @@ class Database {
             'UPDATE access_requests SET status = ?, processed_at = ? WHERE user_id = ?',
             [status, Date.now(), String(userId)]
         );
+    }
+
+    getUserLanguage(userId) {
+        const row = this._db.prepare(
+            'SELECT language FROM access_requests WHERE user_id = ?'
+        ).get(String(userId));
+        return row?.language || 'en';
+    }
+
+    setUserLanguage(userId, lang) {
+        this._db.prepare(
+            "UPDATE access_requests SET language = ? WHERE user_id = ?"
+        ).run(lang, String(userId));
+        this._markDirty();
     }
 }
 

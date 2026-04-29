@@ -1,17 +1,8 @@
 const TelegramBot = require('node-telegram-bot-api');
 const config = require('../config/config');
 const logger = require('../utils/logger');
+const { t } = require('../i18n/telegram');
 
-/**
- * Telegram бот для уведомлений и управления.
- *
- * Расширенный набор команд AlgoTrade Pro v2:
- *   /status, /balance, /stats, /pnl, /risk, /agents, /mode, /paper, /live,
- *   /pause, /resume, /symbols, /close, /help
- *
- * Все команды работают с новой доменной моделью Position
- * (side: 'long'|'short', totalQuantity, remainingQuantity, realizedPnl).
- */
 class TelegramService {
     constructor() {
         this.bot = null;
@@ -47,33 +38,9 @@ class TelegramService {
         return '⚪';
     }
 
-    /**
-     * Escape Telegram Markdown (legacy) reserved characters in a dynamic value
-     * so things like `user_manual` don't get parsed as italic and break the
-     * whole message with "Can't find end of the entity". Apply ONLY to values
-     * being interpolated into a Markdown-formatted message — never to the
-     * whole template (that would escape our intentional *bold* markers).
-     */
     _md(s) {
         if (s == null) return '';
         return String(s).replace(/([_*`\[\]])/g, '\\$1');
-    }
-
-    /** Map internal reason codes to user-friendly labels (no underscores). */
-    _reasonLabel(reason) {
-        const map = {
-            user_manual:        'ручное закрытие',
-            admin_orphan_close: 'админ — orphan-позиции',
-            EMERGENCY_USER:     'аварийное закрытие',
-            EMERGENCY_MANUAL:   'аварийное закрытие',
-            STOP_LOSS_HIT:      'стоп-лосс',
-            TP1_HIT:            'тейк-профит 1',
-            TP2_HIT:            'тейк-профит 2',
-            TP3_HIT:            'тейк-профит 3',
-            FORCE_CLOSE:        'принудительное закрытие',
-            shutdown_liquidate: 'остановка бота'
-        };
-        return map[reason] || this._md(String(reason || '—'));
     }
 
     _dirLabel(side) {
@@ -83,25 +50,41 @@ class TelegramService {
         return 'NEUTRAL';
     }
 
-    _formatPosition(p) {
+    _getLang(chatId) {
+        if (!this._db) return 'en';
+        try {
+            return this._db.getUserLanguage(String(chatId));
+        } catch {
+            return 'en';
+        }
+    }
+
+    _reasonLabel(reason, lang) {
+        const l = lang || 'en';
+        const label = t(`reasons.${reason}`, l);
+        return label === `reasons.${reason}` ? this._md(String(reason || '—')) : label;
+    }
+
+    _formatPosition(p, lang) {
+        const l = lang || 'en';
         const emoji = this._dirEmoji(p.side);
         const label = this._dirLabel(p.side);
         const leverage = p.leverage ? ` x${p.leverage}` : '';
         const mode = p.mode ? ` [${p.mode}]` : '';
         let out = `${emoji} *${label}* ${p.symbol}${leverage}${mode}\n`;
-        out += `💰 Вход: $${this._fmtNum(p.entryPrice, 4)}\n`;
-        out += `📦 Кол-во: ${this._fmtNum(p.remainingQuantity, 6)} / ${this._fmtNum(p.totalQuantity, 6)}\n`;
+        out += t('posEntry', l, { price: this._fmtNum(p.entryPrice, 4) });
+        out += t('posQty', l, { qty: `${this._fmtNum(p.remainingQuantity, 6)} / ${this._fmtNum(p.totalQuantity, 6)}` });
         if (p.stopLoss) {
             const beTag = p.slMovedToBreakeven ? ' (б/у)' : '';
-            out += `🛑 SL: $${this._fmtNum(p.stopLoss, 4)}${beTag}\n`;
+            out += t('posSl', l, { sl: this._fmtNum(p.stopLoss, 4), beTag });
         }
         const tps = [p.tp1Price, p.tp2Price, p.tp3Price].filter(Boolean);
         if (tps.length) {
-            out += `🎯 TP: ${tps.map((t, i) => `TP${i + 1} $${this._fmtNum(t, 4)}`).join(' | ')}\n`;
+            out += t('posTp', l, { tp: tps.map((tp, i) => `TP${i + 1} $${this._fmtNum(tp, 4)}`).join(' | ') });
         }
-        out += `💵 Realized P&L: $${this._fmtNum(p.realizedPnl, 2)}\n`;
+        out += t('posPnl', l, { pnl: this._fmtNum(p.realizedPnl, 2) });
         out += `🆔 \`${p.positionId}\`\n`;
-        out += `📊 Статус: ${p.status}`;
+        out += t('posStatus', l, { status: p.status });
         return out;
     }
 
@@ -123,85 +106,96 @@ class TelegramService {
         this.bot.onText(/^\/symbols/, (msg) => this._cmdSymbols(msg));
         this.bot.onText(/^\/close(?:\s+(\S+))?/, (msg, match) => this._cmdClose(msg, match?.[1]));
 
-        // Inline button callbacks (approve/reject access requests)
         this.bot.on('callback_query', (query) => this._handleCallbackQuery(query).catch((err) => {
             logger.error('[Telegram] callback_query error', { message: err.message });
         }));
 
-        // Generic text messages — collect WEEX UID for access requests
         this.bot.on('message', (msg) => this._handleTextMessage(msg).catch((err) => {
             logger.error('[Telegram] message handler error', { message: err.message });
         }));
     }
 
+    // ─── Language selection + access gate ──────────────────────────────────
     async _cmdStart(msg) {
         const userId = String(msg.from.id);
         const chatId = msg.chat.id;
         const miniAppUrl = config.multiUser?.miniAppUrl;
 
-        // Admin always has full access — skip access request flow entirely
         const isAdmin = String(config.telegram.chatId) === userId;
         if (isAdmin) {
+            const lang = this._getLang(userId);
             const replyMarkup = miniAppUrl
-                ? { inline_keyboard: [[{ text: '🚀 Открыть приложение', web_app: { url: miniAppUrl } }]] }
+                ? { inline_keyboard: [[{ text: t('btnOpenApp', lang), web_app: { url: miniAppUrl } }]] }
                 : undefined;
             await this.bot.sendMessage(
                 chatId,
-                '👋 *Добро пожаловать, администратор!*\n\nПолный доступ к AlgoTrade Pro.',
+                t('adminWelcome', lang),
                 { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
             );
             return;
         }
 
-        // Check access status if DB is available
-        if (this._db) {
-            const request = await this._db.getAccessRequest(userId).catch(() => null);
+        const request = this._db ? await this._db.getAccessRequest(userId).catch(() => null) : null;
 
-            if (request?.status === 'approved') {
-                // Approved — show mini-app button
-                const replyMarkup = miniAppUrl
-                    ? { inline_keyboard: [[{ text: '🚀 Открыть приложение', web_app: { url: miniAppUrl } }]] }
-                    : undefined;
-                await this.bot.sendMessage(
-                    chatId,
-                    '👋 *Добро пожаловать в AlgoTrade Pro!*\n\nОткройте приложение для подключения API ключей и настройки.',
-                    { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
-                );
-                return;
-            }
-
-            if (request?.status === 'pending') {
-                await this.bot.sendMessage(
-                    chatId,
-                    '⏳ Ваша заявка на рассмотрении. Ожидайте подтверждения от администратора.',
-                    { parse_mode: 'Markdown' }
-                );
-                return;
-            }
+        // No language chosen yet — show selector
+        if (!request || !request.language) {
+            await this.bot.sendMessage(chatId, t('chooseLanguage', 'en'), {
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: t('btnRu', 'en'), callback_data: 'lang_ru' },
+                        { text: t('btnEn', 'en'), callback_data: 'lang_en' }
+                    ]]
+                }
+            });
+            return;
         }
 
-        // New user (or no DB) — ask for WEEX UID
-        await this.bot.sendMessage(
-            chatId,
-            '👋 *Добро пожаловать!*\n\nДля получения доступа к AlgoTrade Pro отправьте ваш *UID аккаунта WEEX*.\n\n_Найдите его в приложении WEEX → Профиль → UID_',
-            { parse_mode: 'Markdown' }
-        );
+        await this._sendWelcomeByStatus(chatId, userId, request, request.language);
+    }
+
+    async _sendWelcomeByStatus(chatId, userId, request, lang) {
+        const miniAppUrl = config.multiUser?.miniAppUrl;
+        if (request?.status === 'approved') {
+            const replyMarkup = miniAppUrl
+                ? { inline_keyboard: [[{ text: t('btnOpenApp', lang), web_app: { url: miniAppUrl } }]] }
+                : undefined;
+            await this.bot.sendMessage(
+                chatId,
+                t('approvedWelcome', lang),
+                { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
+            );
+        } else if (request?.status === 'pending') {
+            await this.bot.sendMessage(chatId, t('pendingRequest', lang));
+        } else {
+            await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
+        }
     }
 
     async _handleTextMessage(msg) {
-        // Only private chats, only plain text, skip commands
         if (!msg.text || msg.text.startsWith('/') || msg.chat.type !== 'private') return;
-        // Skip if no DB configured
         if (!this._db) return;
 
         const userId = String(msg.from.id);
         const chatId = msg.chat.id;
 
-        // Ignore admin and already-approved users
         if (String(config.telegram.chatId) === userId) return;
         const request = await this._db.getAccessRequest(userId).catch(() => null);
         if (request?.status === 'approved') return;
 
+        // If user hasn't chosen a language yet, prompt them first
+        if (!request || !request.language) {
+            await this.bot.sendMessage(chatId, t('chooseLanguage', 'en'), {
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: t('btnRu', 'en'), callback_data: 'lang_ru' },
+                        { text: t('btnEn', 'en'), callback_data: 'lang_en' }
+                    ]]
+                }
+            });
+            return;
+        }
+
+        const lang = request.language || 'en';
         const weexUid = msg.text.trim();
         const requestId = `req_${userId}_${Date.now()}`;
 
@@ -212,15 +206,11 @@ class TelegramService {
             username: msg.from.username || msg.from.first_name || userId,
             weexUid
         });
+        // Preserve language after upsert (upsert resets to pending but keeps language col)
+        this._db.setUserLanguage(userId, lang);
 
-        // Confirm to user
-        await this.bot.sendMessage(
-            chatId,
-            '✅ Заявка отправлена! Ожидайте подтверждения от администратора.',
-            { parse_mode: 'Markdown' }
-        );
+        await this.bot.sendMessage(chatId, t('requestSent', lang));
 
-        // Notify admin with approve/reject buttons
         const adminChatId = config.telegram.chatId;
         if (!adminChatId) return;
 
@@ -230,13 +220,13 @@ class TelegramService {
 
         await this.bot.sendMessage(
             adminChatId,
-            `🔔 *Новая заявка на доступ*\n\nПользователь: ${this._md(displayName)}\nTelegram ID: \`${userId}\`\nWEEX UID: \`${this._md(weexUid)}\``,
+            t('newRequestAdmin', 'ru', { name: this._md(displayName), userId, weexUid: this._md(weexUid) }),
             {
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [[
-                        { text: '✅ Одобрить', callback_data: `approve_${userId}` },
-                        { text: '❌ Отклонить', callback_data: `reject_${userId}` }
+                        { text: t('btnApprove', 'ru'), callback_data: `approve_${userId}` },
+                        { text: t('btnReject', 'ru'), callback_data: `reject_${userId}` }
                     ]]
                 }
             }
@@ -249,6 +239,35 @@ class TelegramService {
         await this.bot.answerCallbackQuery(query.id).catch(() => {});
 
         const data = query.data || '';
+
+        // ── Language selection ─────────────────────────────────────────────
+        if (data.startsWith('lang_')) {
+            const lang = data === 'lang_ru' ? 'ru' : 'en';
+            const userId = String(query.from.id);
+            const chatId = query.message.chat.id;
+
+            await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+
+            if (this._db) {
+                const existing = await this._db.getAccessRequest(userId).catch(() => null);
+                if (!existing) {
+                    await this._db.upsertAccessRequest({
+                        requestId: `req_${userId}_${Date.now()}`,
+                        userId,
+                        chatId: String(chatId),
+                        username: query.from.username || query.from.first_name || userId,
+                        weexUid: null
+                    });
+                }
+                this._db.setUserLanguage(userId, lang);
+            }
+
+            const request = this._db ? await this._db.getAccessRequest(userId).catch(() => null) : null;
+            await this._sendWelcomeByStatus(chatId, userId, request, lang);
+            return;
+        }
+
+        // ── Approve / Reject ───────────────────────────────────────────────
         const underscoreIdx = data.indexOf('_');
         if (underscoreIdx === -1) return;
 
@@ -268,252 +287,223 @@ class TelegramService {
         await this._db.updateAccessRequestStatus(userId, status);
 
         const displayName = request.username || userId;
+        const uid = request.weex_uid || '—';
 
-        // Edit admin message to remove buttons and show result
         const statusText = status === 'approved'
-            ? `✅ Одобрено: ${displayName} (UID: ${request.weex_uid || '—'})`
-            : `❌ Отклонено: ${displayName}`;
+            ? t('approvedLabel', 'ru', { name: displayName, uid })
+            : t('rejectedLabel', 'ru', { name: displayName });
         await this.bot.editMessageText(statusText, {
             chat_id: query.message.chat.id,
             message_id: query.message.message_id
         }).catch(() => {});
 
-        // Notify the user
+        const userLang = request.language || 'en';
         const miniAppUrl = config.multiUser?.miniAppUrl;
+
         if (status === 'approved') {
             const replyMarkup = miniAppUrl
-                ? { inline_keyboard: [[{ text: '🚀 Открыть приложение', web_app: { url: miniAppUrl } }]] }
+                ? { inline_keyboard: [[{ text: t('btnOpenApp', userLang), web_app: { url: miniAppUrl } }]] }
                 : undefined;
             await this.bot.sendMessage(
                 request.chat_id,
-                '🎉 *Доступ одобрен!*\n\nДобро пожаловать в AlgoTrade Pro. Откройте приложение для подключения API ключей WEEX.',
+                t('accessApproved', userLang),
                 { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
             );
         } else {
-            await this.bot.sendMessage(
-                request.chat_id,
-                '❌ В доступе отказано. Свяжитесь с поддержкой.'
-            );
+            await this.bot.sendMessage(request.chat_id, t('accessRejected', userLang));
         }
 
         logger.info('[Telegram] access request processed', { userId, status, displayName });
     }
 
+    // ─── Admin commands ────────────────────────────────────────────────────
     async _cmdHelp(msg) {
-        const message = `📚 *AlgoTrade Pro v2 — команды*
-━━━━━━━━━━━━━━━
-*Наблюдение:*
-/status — открытые позиции
-/balance — баланс USDT
-/stats — статистика торговли
-/pnl [today|week|month] — P&L за период
-/risk — состояние риск-модуля
-/agents — состав консилиума
-/symbols — активные инструменты
-
-*Управление:*
-/mode [fast|standard|full] — режим Арбитра
-/paper — текущий режим (инфо)
-/live — текущий режим (инфо)
-/pause [reason] — поставить торговлю на паузу
-/resume — снять паузу
-/close [positionId|symbol] — закрыть позицию/символ/всё`;
-        this.sendMessage(message, msg.chat.id);
+        const lang = this._getLang(msg.chat.id);
+        this.sendMessage(t('helpText', lang), msg.chat.id);
     }
 
     async _cmdStatus(msg) {
+        const lang = this._getLang(msg.chat.id);
         try {
             const orch = this.orchestrator;
             const positions = orch._pm.getOpen();
             const risk = orch._risk.snapshot();
 
-            let message = `📊 *Статус AlgoTrade Pro*\n━━━━━━━━━━━━━━━\n`;
-            message += `🔌 Режим: *${(config.trading?.mode || 'paper').toUpperCase()}*\n`;
-            message += `🧠 Арбитр: *${orch._arbiter?.mode || '—'}*\n`;
+            let message = t('statusHeader', lang);
+            message += t('statusMode', lang, { mode: (config.trading?.mode || 'paper').toUpperCase() });
+            message += t('statusArbiter', lang, { mode: orch._arbiter?.mode || '—' });
             message += risk.paused
-                ? `⛔ Торговля на паузе: ${risk.pauseReason || '—'}\n`
-                : `🟢 Торговля активна\n`;
-            message += `📦 Открытых позиций: *${positions.length}*\n\n`;
+                ? t('statusPaused', lang, { reason: risk.pauseReason || '—' })
+                : t('statusActive', lang);
+            message += t('statusPositions', lang, { count: positions.length });
 
             if (positions.length === 0) {
-                message += `📭 Нет открытых позиций`;
+                message += '\n' + t('noPositions', lang);
             } else {
-                message += positions.map((p, i) => `*#${i + 1}*\n${this._formatPosition(p)}`).join('\n\n');
+                message += '\n' + positions.map((p, i) => `*#${i + 1}*\n${this._formatPosition(p, lang)}`).join('\n\n');
             }
             this.sendMessage(message, msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdBalance(msg) {
+        const lang = this._getLang(msg.chat.id);
         try {
             const orch = this.orchestrator;
             const isLive = (config.trading?.mode || 'paper') === 'live';
-            let available = null;
-            let source = isLive ? 'WEEX (live)' : 'PaperBroker';
-
-            // Prefer broker wrapper if present on orchestrator
+            const source = isLive ? 'WEEX (live)' : 'PaperBroker';
             const broker = orch._pm?._broker;
-            if (broker?.getAvailableBalanceUsd) {
-                available = await broker.getAvailableBalanceUsd();
-            }
-
-            const message = `💰 *Баланс*\n━━━━━━━━━━━━━━━\nИсточник: ${source}\n📗 Доступно: $${this._fmtNum(available, 2)}`;
-            this.sendMessage(message, msg.chat.id);
+            let available = null;
+            if (broker?.getAvailableBalanceUsd) available = await broker.getAvailableBalanceUsd();
+            this.sendMessage(t('balanceMsg', lang, { source, amount: this._fmtNum(available, 2) }), msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка баланса: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdStats(msg) {
+        const lang = this._getLang(msg.chat.id);
         try {
             const stats = (await this.orchestrator._db.getDailyStats?.()) || {};
-            const message = `📈 *Статистика (сегодня)*
-━━━━━━━━━━━━━━━
-📊 Всего сделок: ${stats.totalTrades ?? 0}
-✅ Закрыто: ${stats.closedTrades ?? 0}
-🟢 Прибыльных: ${stats.winTrades ?? 0}
-🔴 Убыточных: ${stats.lossTrades ?? 0}
-📉 Винрейт: ${this._fmtNum(stats.winRate, 1)}%
-💵 P&L: $${this._fmtNum(stats.totalPnl, 2)}`;
-            this.sendMessage(message, msg.chat.id);
+            this.sendMessage(t('statsMsg', lang, {
+                total:  stats.totalTrades ?? 0,
+                closed: stats.closedTrades ?? 0,
+                wins:   stats.winTrades ?? 0,
+                losses: stats.lossTrades ?? 0,
+                wr:     this._fmtNum(stats.winRate, 1),
+                pnl:    this._fmtNum(stats.totalPnl, 2)
+            }), msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdPnl(msg, period) {
+        const lang = this._getLang(msg.chat.id);
         try {
             const db = this.orchestrator._db;
             const data = typeof db.getPnlForPeriod === 'function'
                 ? await db.getPnlForPeriod(period)
                 : await db.getDailyStats?.();
-            const pnl = data?.totalPnl ?? 0;
-            const trades = data?.closedTrades ?? data?.totalTrades ?? 0;
-            const message = `💵 *P&L — ${period}*
-━━━━━━━━━━━━━━━
-Сделок: ${trades}
-P&L: $${this._fmtNum(pnl, 2)}`;
-            this.sendMessage(message, msg.chat.id);
+            this.sendMessage(t('pnlMsg', lang, {
+                period,
+                trades: data?.closedTrades ?? data?.totalTrades ?? 0,
+                pnl:    this._fmtNum(data?.totalPnl ?? 0, 2)
+            }), msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdRisk(msg) {
+        const lang = this._getLang(msg.chat.id);
         try {
             const snap = this.orchestrator._risk.snapshot();
             const cfg = config.risk || {};
-            const message = `⚠️ *Риск-модуль*
-━━━━━━━━━━━━━━━
-Статус: ${snap.paused ? `⛔ PAUSED (${snap.pauseReason || '—'})` : '🟢 ACTIVE'}
-Дневной P&L: $${this._fmtNum(snap.dailyPnl, 2)}
-Макс. дневная потеря: ${this._fmtNum(cfg.maxDailyLossPercent, 1)}%
-Макс. позиций: ${cfg.maxOpenPositions ?? '—'}
-Риск на сделку: ${this._fmtNum(cfg.riskPerTradePercent, 1)}%`;
-            this.sendMessage(message, msg.chat.id);
+            this.sendMessage(t('riskMsg', lang, {
+                status: snap.paused ? `⛔ PAUSED (${snap.pauseReason || '—'})` : '🟢 ACTIVE',
+                pnl:    this._fmtNum(snap.dailyPnl, 2),
+                loss:   this._fmtNum(cfg.maxDailyLossPercent, 1),
+                maxPos: cfg.maxOpenPositions ?? '—',
+                risk:   this._fmtNum(cfg.riskPerTradePercent, 1)
+            }), msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdAgents(msg) {
+        const lang = this._getLang(msg.chat.id);
         const agents = this.orchestrator._tradingAgents || [];
         const riskAgent = this.orchestrator._riskAgent;
         const lines = agents.map((a) => `• ${a.name || a.constructor.name}`);
         if (riskAgent) lines.push(`• ${riskAgent.name || riskAgent.constructor.name} (veto)`);
         lines.push(`• Arbiter (mode: ${this.orchestrator._arbiter?.mode || '—'})`);
-        const message = `🤖 *Консилиум агентов*\n━━━━━━━━━━━━━━━\n${lines.join('\n')}`;
-        this.sendMessage(message, msg.chat.id);
+        this.sendMessage(t('agentsMsg', lang, { list: lines.join('\n') }), msg.chat.id);
     }
 
     async _cmdMode(msg, mode) {
+        const lang = this._getLang(msg.chat.id);
         try {
             const arbiter = this.orchestrator._arbiter;
             if (!mode) {
-                this.sendMessage(`🧠 Текущий режим Арбитра: *${arbiter?.mode || '—'}*\nИспользуйте: /mode fast|standard|full`, msg.chat.id);
+                this.sendMessage(t('modeCurrent', lang, { mode: arbiter?.mode || '—' }), msg.chat.id);
                 return;
             }
             const upper = mode.toUpperCase();
             if (!['FAST', 'STANDARD', 'FULL'].includes(upper)) {
-                this.sendMessage(`❌ Неверный режим. Допустимо: fast, standard, full`, msg.chat.id);
+                this.sendMessage(t('modeInvalid', lang), msg.chat.id);
                 return;
             }
             arbiter.setMode(upper);
-            this.sendMessage(`✅ Режим Арбитра переключён: *${upper}*`, msg.chat.id);
+            this.sendMessage(t('modeSwitched', lang, { mode: upper }), msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdMarkMode(msg, requested) {
+        const lang = this._getLang(msg.chat.id);
         const current = config.trading?.mode || 'paper';
-        if (current === requested) {
-            this.sendMessage(`ℹ️ Режим уже *${requested.toUpperCase()}*.`, msg.chat.id);
-        } else {
-            this.sendMessage(
-                `ℹ️ Текущий режим: *${current.toUpperCase()}*.\n` +
-                `Переключение paper↔live производится через env \`TRADING_MODE\` и рестарт процесса.`,
-                msg.chat.id
-            );
-        }
+        this.sendMessage(t('modeInfo', lang, { mode: current.toUpperCase() }), msg.chat.id);
     }
 
     async _cmdPause(msg, reason) {
+        const lang = this._getLang(msg.chat.id);
         try {
             this.orchestrator._risk.pause(reason);
-            this.sendMessage(`⛔ Торговля приостановлена: ${reason}`, msg.chat.id);
+            this.sendMessage(t('pauseMsg', lang, { reason }), msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdResume(msg) {
+        const lang = this._getLang(msg.chat.id);
         try {
             this.orchestrator._risk.resume();
-            this.sendMessage(`🟢 Торговля возобновлена`, msg.chat.id);
+            this.sendMessage(t('resumeMsg', lang), msg.chat.id);
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
     async _cmdSymbols(msg) {
+        const lang = this._getLang(msg.chat.id);
         const symbols = config.trading?.symbols || [];
         const tfs = config.trading?.timeframes || [];
-        const message = `📊 *Активные инструменты*
-━━━━━━━━━━━━━━━
-Символы: ${symbols.join(', ') || '—'}
-Таймфреймы: ${tfs.join(', ') || '—'}`;
-        this.sendMessage(message, msg.chat.id);
+        this.sendMessage(t('symbolsMsg', lang, {
+            symbols: symbols.join(', ') || '—',
+            tfs:     tfs.join(', ') || '—'
+        }), msg.chat.id);
     }
 
     async _cmdClose(msg, arg) {
+        const lang = this._getLang(msg.chat.id);
         try {
             const positions = this.orchestrator._pm.getOpen();
             if (positions.length === 0) {
-                this.sendMessage('📭 Нет открытых позиций', msg.chat.id);
+                this.sendMessage(t('noPositions', lang), msg.chat.id);
                 return;
             }
-
             let opts = {};
             if (arg) {
-                // Either a positionId or a symbol
                 if (positions.some((p) => p.positionId === arg)) opts.positionId = arg;
                 else opts.symbol = arg.toUpperCase();
             }
-
             const result = await this.orchestrator.emergencyClose(opts);
             if (result.success) {
                 const msgBody = result.closed
-                    ? `✅ Закрыто позиций: ${result.closed}`
-                    : `✅ Позиция закрыта: ${result.position?.positionId || '—'}`;
+                    ? t('closedCount', lang, { count: result.closed })
+                    : t('closedOne', lang, { id: result.position?.positionId || '—' });
                 this.sendMessage(msgBody, msg.chat.id);
             } else {
-                this.sendMessage(`❌ Ошибка закрытия: ${result.error}`, msg.chat.id);
+                this.sendMessage(t('errClose', lang, { msg: result.error }), msg.chat.id);
             }
         } catch (err) {
-            this.sendMessage(`❌ Ошибка: ${err.message}`, msg.chat.id);
+            this.sendMessage(t('errGeneric', lang, { msg: err.message }), msg.chat.id);
         }
     }
 
@@ -530,48 +520,60 @@ P&L: $${this._fmtNum(pnl, 2)}`;
     }
 
     async notifyPositionOpened(position, chatId) {
-        const message = `${this._dirEmoji(position.side)} *${this._dirLabel(position.side)} ОТКРЫТ*
-━━━━━━━━━━━━━━━
-${this._formatPosition(position)}`;
+        const lang = this._getLang(chatId);
+        const message = t('posOpened', lang, {
+            emoji:   this._dirEmoji(position.side),
+            label:   this._dirLabel(position.side),
+            details: this._formatPosition(position, lang)
+        });
         await this.sendMessage(message, chatId);
     }
 
     async notifyTakeProfitHit(data, chatId) {
+        const lang = this._getLang(chatId);
         const { position, level, pnl } = data;
-        const message = `🎯 *TP${level} ДОСТИГНУТ*
-━━━━━━━━━━━━━━━
-📊 ${position.symbol} ${this._dirLabel(position.side)}
-💵 P&L частично: $${this._fmtNum(pnl, 2)}
-📦 Остаток: ${this._fmtNum(position.remainingQuantity, 6)}
-${position.slMovedToBreakeven ? '🛡️ SL перемещён в безубыток' : ''}`;
+        const slMsg = position.slMovedToBreakeven ? t('slMovedBe', lang, { price: this._fmtNum(position.stopLoss, 4) }) : '';
+        const message = t('tpHit', lang, {
+            level,
+            symbol: position.symbol,
+            dir:    this._dirLabel(position.side),
+            pnl:    this._fmtNum(pnl, 2),
+            qty:    this._fmtNum(position.remainingQuantity, 6),
+            slMsg
+        });
         await this.sendMessage(message, chatId);
     }
 
     async notifyStopLossHit(data, chatId) {
+        const lang = this._getLang(chatId);
         const { position, pnl } = data;
-        const message = `🛑 *STOP LOSS*
-━━━━━━━━━━━━━━━
-📊 ${position.symbol} ${this._dirLabel(position.side)}
-💵 P&L: $${this._fmtNum(pnl, 2)}`;
+        const message = t('slHit', lang, {
+            symbol: position.symbol,
+            dir:    this._dirLabel(position.side),
+            pnl:    this._fmtNum(pnl, 2)
+        });
         await this.sendMessage(message, chatId);
     }
 
     async notifyPositionClosed(data, chatId) {
+        const lang = this._getLang(chatId);
         const { position, reason, pnl } = data;
         const sign = Number(pnl) >= 0 ? '+' : '';
         const emoji = Number(pnl) >= 0 ? '🟢' : '🔴';
-        const message = `${emoji} *ПОЗИЦИЯ ЗАКРЫТА*
-━━━━━━━━━━━━━━━
-📊 ${this._md(position.symbol)} ${this._dirLabel(position.side)}
-📝 Причина: ${this._reasonLabel(reason)}
-💵 P&L: ${sign}$${this._fmtNum(pnl, 2)}
-💰 Realized total: $${this._fmtNum(position.realizedPnl, 2)}`;
+        const message = t('posClosed', lang, {
+            emoji,
+            symbol:   this._md(position.symbol),
+            dir:      this._dirLabel(position.side),
+            reason:   this._reasonLabel(reason, lang),
+            pnl:      `${sign}$${this._fmtNum(pnl, 2)}`,
+            realized: this._fmtNum(position.realizedPnl, 2)
+        });
         await this.sendMessage(message, chatId);
     }
 
     async notifyError(error) {
         const text = typeof error === 'string' ? error : (error?.message || String(error));
-        await this.sendMessage(`⚠️ *ОШИБКА*\n━━━━━━━━━━━━━━━\n${text}`);
+        await this.sendMessage(t('errMsg', 'ru', { text }));
     }
 
     async notifyDecision(_decision) {
