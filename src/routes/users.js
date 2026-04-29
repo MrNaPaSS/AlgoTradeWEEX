@@ -217,73 +217,30 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
             const now = Date.now();
             const DAY = 24 * 60 * 60 * 1000;
 
-            // ── Stats from WEEX exchange API (source of truth) ────────────────
+            // ── Stats from DB (sql.js parameterized queries — fixed) ─────────────
             const EMPTY_STATS = { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 };
             let stats = EMPTY_STATS, stats7d = EMPTY_STATS, stats30d = EMPTY_STATS,
                 allTimeStats = EMPTY_STATS, pnlSeries = [];
 
-            function aggregateTrades(trades, sinceTs) {
-                const closing = trades.filter(t => {
-                    const pnl = Number(t.realizedPnl);
-                    if (isNaN(pnl) || pnl === 0) return false;
-                    if (sinceTs != null && Number(t.time) < sinceTs) return false;
-                    return true;
-                });
-                const totalPnl = closing.reduce((s, t) => s + Number(t.realizedPnl), 0);
-                const wins   = closing.filter(t => Number(t.realizedPnl) > 0).length;
-                const losses = closing.filter(t => Number(t.realizedPnl) < 0).length;
-                const total  = closing.length;
-                return {
-                    totalTrades: total, winTrades: wins, lossTrades: losses,
-                    totalPnl, winRate: total > 0 ? Math.round(wins / total * 100) : 0
-                };
-            }
-
             try {
-                const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-                const client = engine.broker._client;
-
-                // Two fetches: last 30 days (for today/7d/30d + sparkline)
-                // and last 100 trades with no time filter (for all-time).
-                const [trades30d, tradesAll] = await Promise.all([
-                    client.getUserTrades({ startTime: now - 30 * DAY, limit: 100 }),
-                    client.getUserTrades({ limit: 100 })
+                const results = await Promise.all([
+                    db.getDailyStats(userId, { includeOrphaned: true }),
+                    db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 7 * DAY }),
+                    db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY }),
+                    db.getAllTimeStats(userId, { includeOrphaned: true }),
+                    db.getRecentClosedTrades(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY, limit: 100 })
                 ]);
+                stats        = results[0] || EMPTY_STATS;
+                stats7d      = results[1] || EMPTY_STATS;
+                stats30d     = results[2] || EMPTY_STATS;
+                allTimeStats = results[3] || EMPTY_STATS;
+                pnlSeries    = results[4] || [];
 
-                const t30 = Array.isArray(trades30d) ? trades30d : [];
-                const tAll = Array.isArray(tradesAll) ? tradesAll : [];
-
-                stats        = aggregateTrades(t30, todayStart.getTime());
-                stats7d      = aggregateTrades(t30, now - 7 * DAY);
-                stats30d     = aggregateTrades(t30, null);
-                allTimeStats = aggregateTrades(tAll, null);
-
-                // pnlSeries for sparkline — closing fills sorted oldest→newest
-                pnlSeries = t30
-                    .filter(t => Number(t.realizedPnl) !== 0)
-                    .sort((a, b) => Number(a.time) - Number(b.time))
-                    .map(t => ({ closedAt: Number(t.time), realizedPnl: Number(t.realizedPnl) }));
-
-                logger.info('[users] /me/status exchange stats', {
+                logger.info('[users] /me/status stats', {
                     userId, today: stats, week: stats7d, month: stats30d, allTime: allTimeStats
                 });
-            } catch (exchErr) {
-                logger.warn('[users] exchange stats failed — falling back to DB', { message: exchErr.message });
-                try {
-                    [stats, stats7d, stats30d, allTimeStats, pnlSeries] = await Promise.all([
-                        db.getDailyStats(userId, { includeOrphaned: true }),
-                        db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 7 * DAY }),
-                        db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY }),
-                        db.getAllTimeStats(userId, { includeOrphaned: true }),
-                        db.getRecentClosedTrades(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY, limit: 100 })
-                    ]);
-                    stats        = stats        || EMPTY_STATS;
-                    stats7d      = stats7d      || EMPTY_STATS;
-                    stats30d     = stats30d     || EMPTY_STATS;
-                    allTimeStats = allTimeStats || EMPTY_STATS;
-                } catch (dbErr) {
-                    logger.error('[users] DB stats fallback also failed', { message: dbErr.message });
-                }
+            } catch (dbErr) {
+                logger.error('[users] stats error', { message: dbErr.message });
             }
 
             let balance = null;
