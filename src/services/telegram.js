@@ -579,6 +579,48 @@ class TelegramService {
     async notifyDecision(_decision) {
         // Arbiter decision details are internal — not sent to users.
     }
+
+    // ─── Forum (public signal broadcast) ──────────────────────────────────────
+    _formatSignalForForum(signal, decision) {
+        const emoji = decision.direction === 'LONG' ? '📈' : '📉';
+        const tps = decision.risk?.sizing?.takeProfits || [];
+        const sl = decision.risk?.sizing?.stopLoss;
+        const confidence = decision.confidence != null
+            ? Math.round(Number(decision.confidence) * 100)
+            : null;
+
+        let msg = `${emoji} *${decision.direction} — ${signal.symbol}* \`${signal.tf}\`\n`;
+        msg += `━━━━━━━━━━━━━━━\n`;
+        msg += `💰 Вход: $${this._fmtNum(signal.price, 4)}\n`;
+        if (sl) msg += `🛑 SL: $${this._fmtNum(sl, 4)}\n`;
+        if (tps.length) {
+            msg += `\n*Take-Profit:*\n`;
+            tps.forEach((tp) => {
+                msg += `🎯 TP${tp.level}: $${this._fmtNum(tp.price, 4)}  _(${tp.closePercent}%)_\n`;
+            });
+        }
+        if (confidence != null) msg += `\n📊 Уверенность: ${confidence}%\n`;
+        msg += `⏰ ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC`;
+        return msg;
+    }
+
+    async notifySignalToForum(signal, decision) {
+        if (!this.bot) return;
+        if (!config.telegram.isForumConfigured) return;
+        const msg = this._formatSignalForForum(signal, decision);
+        try {
+            await this.bot.sendMessage(config.telegram.forumChatId, msg, {
+                parse_mode: 'Markdown',
+                message_thread_id: config.telegram.forumTopicId
+            });
+            logger.info('[Telegram] signal posted to forum', {
+                symbol: signal.symbol, tf: signal.tf, direction: decision.direction,
+                topic: config.telegram.forumTopicId
+            });
+        } catch (err) {
+            logger.error('[Telegram] forum post failed', { message: err.message });
+        }
+    }
 }
 
 module.exports = new TelegramService();

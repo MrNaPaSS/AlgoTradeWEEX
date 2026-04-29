@@ -104,6 +104,11 @@ function createWebhookRouter({ orchestrator, telegram, metrics } = {}) {
             const decision = await orchestrator.handleSignal(signal);
             const elapsed = Date.now() - startedAt;
             if (decision && telegram) {
+                // Broadcast EXECUTE decisions to public forum
+                if (decision.outcome === 'EXECUTE') {
+                    telegram.notifySignalToForum(signal, decision)
+                        .catch((e) => logger.warn('[webhook] forum notify failed', { message: e.message }));
+                }
                 telegram.notifyDecision({ ...decision, symbol: signal.symbol, tf: signal.tf })
                     .catch((e) => logger.warn('[webhook] telegram notify failed', { message: e.message }));
             }

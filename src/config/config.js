@@ -86,7 +86,10 @@ const config = Object.freeze({
     telegram: Object.freeze({
         botToken: env.TELEGRAM_BOT_TOKEN,
         chatId: env.TELEGRAM_CHAT_ID,
-        isConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID)
+        forumChatId: env.TELEGRAM_FORUM_CHAT_ID,
+        forumTopicId: env.TELEGRAM_FORUM_TOPIC_ID,
+        isConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
+        isForumConfigured: Boolean(env.TELEGRAM_FORUM_CHAT_ID && env.TELEGRAM_FORUM_TOPIC_ID > 0)
     }),
 
     external: Object.freeze({

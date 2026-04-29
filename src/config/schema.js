@@ -68,6 +68,9 @@ const envSchema = z.object({
 
     TELEGRAM_BOT_TOKEN: z.string().default(''),
     TELEGRAM_CHAT_ID: z.string().default(''),
+    // Forum (supergroup with topics) for public signal broadcasting
+    TELEGRAM_FORUM_CHAT_ID: z.string().default(''),
+    TELEGRAM_FORUM_TOPIC_ID: z.coerce.number().int().nonnegative().default(0),
 
     TWELVEDATA_API_KEY: z.string().default(''),
     FEAR_GREED_API_URL: z.string().url().default('https://api.alternative.me/fng/'),
