@@ -203,7 +203,7 @@ async function bootstrap() {
         }
     });
 
-    telegram.initialize(orchestrator);
+    telegram.initialize(orchestrator, db);
     container.registerValue('telegram', telegram);
 
     // ── Multi-User Engine ─────────────────────────────────────────────────────

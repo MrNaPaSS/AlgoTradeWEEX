@@ -126,6 +126,19 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
+
+CREATE TABLE IF NOT EXISTS access_requests (
+    request_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,
+    chat_id TEXT NOT NULL,
+    username TEXT,
+    weex_uid TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_access_requests_status ON access_requests(status);
+CREATE INDEX IF NOT EXISTS idx_access_requests_user ON access_requests(user_id);
 `;
 
 class Database {
@@ -240,6 +253,33 @@ class Database {
                 if (!/duplicate column/i.test(err.message)) {
                     logger.error('[Database] migration v6 (reason) failed', { message: err.message });
                     throw err;
+                }
+            }
+        }
+
+        // v7: access_requests table for Telegram onboarding flow
+        const accessTableExists = this._db.exec(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='access_requests'"
+        );
+        if (!accessTableExists[0]?.values?.length) {
+            try {
+                this._db.run(`CREATE TABLE IF NOT EXISTS access_requests (
+                    request_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL UNIQUE,
+                    chat_id TEXT NOT NULL,
+                    username TEXT,
+                    weex_uid TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at INTEGER NOT NULL,
+                    processed_at INTEGER
+                )`);
+                this._db.run('CREATE INDEX IF NOT EXISTS idx_access_requests_status ON access_requests(status)');
+                this._db.run('CREATE INDEX IF NOT EXISTS idx_access_requests_user ON access_requests(user_id)');
+                this._markDirty();
+                logger.info('[Database] migration v7: created access_requests table');
+            } catch (err) {
+                if (!/already exists/i.test(err.message)) {
+                    logger.error('[Database] migration v7 failed', { message: err.message });
                 }
             }
         }
@@ -593,6 +633,41 @@ class Database {
 
     async deleteUser(userId) {
         await this.run('DELETE FROM users WHERE user_id = ?', [userId]);
+    }
+
+    // ─── Access Requests ─────────────────────────────────────────────────────
+
+    async getAccessRequest(userId) {
+        const res = this._db.exec(
+            'SELECT request_id, user_id, chat_id, username, weex_uid, status, created_at, processed_at FROM access_requests WHERE user_id = ?',
+            [String(userId)]
+        );
+        if (!res[0]?.values?.length) return null;
+        const cols = res[0].columns;
+        return Object.fromEntries(cols.map((c, i) => [c, res[0].values[0][i]]));
+    }
+
+    async upsertAccessRequest({ requestId, userId, chatId, username, weexUid }) {
+        await this.run(
+            `INSERT INTO access_requests (request_id, user_id, chat_id, username, weex_uid, status, created_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+               request_id = excluded.request_id,
+               chat_id    = excluded.chat_id,
+               username   = excluded.username,
+               weex_uid   = excluded.weex_uid,
+               status     = 'pending',
+               created_at = excluded.created_at,
+               processed_at = NULL`,
+            [requestId, String(userId), String(chatId), username ?? null, weexUid ?? null, Date.now()]
+        );
+    }
+
+    async updateAccessRequestStatus(userId, status) {
+        await this.run(
+            'UPDATE access_requests SET status = ?, processed_at = ? WHERE user_id = ?',
+            [status, Date.now(), String(userId)]
+        );
     }
 }
 

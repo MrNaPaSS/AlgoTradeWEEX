@@ -17,15 +17,17 @@ class TelegramService {
         this.bot = null;
         this.chatId = config.telegram.chatId;
         this.orchestrator = null;
+        this._db = null;
     }
 
-    initialize(orchestrator) {
+    initialize(orchestrator, database = null) {
         if (!config.telegram.botToken) {
             logger.warn('[Telegram] bot not configured — token missing');
             return;
         }
 
         this.orchestrator = orchestrator;
+        this._db = database;
         this.bot = new TelegramBot(config.telegram.botToken, { polling: true });
 
         this.setupCommands();
@@ -120,30 +122,166 @@ class TelegramService {
         this.bot.onText(/^\/resume/, (msg) => this._cmdResume(msg));
         this.bot.onText(/^\/symbols/, (msg) => this._cmdSymbols(msg));
         this.bot.onText(/^\/close(?:\s+(\S+))?/, (msg, match) => this._cmdClose(msg, match?.[1]));
+
+        // Inline button callbacks (approve/reject access requests)
+        this.bot.on('callback_query', (query) => this._handleCallbackQuery(query).catch((err) => {
+            logger.error('[Telegram] callback_query error', { message: err.message });
+        }));
+
+        // Generic text messages — collect WEEX UID for access requests
+        this.bot.on('message', (msg) => this._handleTextMessage(msg).catch((err) => {
+            logger.error('[Telegram] message handler error', { message: err.message });
+        }));
     }
 
     async _cmdStart(msg) {
+        const userId = String(msg.from.id);
+        const chatId = msg.chat.id;
         const miniAppUrl = config.multiUser?.miniAppUrl;
-        if (miniAppUrl) {
-            try {
+
+        // Check access status if DB is available
+        if (this._db) {
+            const request = await this._db.getAccessRequest(userId).catch(() => null);
+
+            if (request?.status === 'approved') {
+                // Approved — show mini-app button
+                const replyMarkup = miniAppUrl
+                    ? { inline_keyboard: [[{ text: '🚀 Открыть приложение', web_app: { url: miniAppUrl } }]] }
+                    : undefined;
                 await this.bot.sendMessage(
-                    msg.chat.id,
-                    '👋 *Добро пожаловать в AlgoTrade Pro!*\n\nОткройте панель управления для подключения API ключей и настройки риска.',
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [[
-                                { text: '🚀 Открыть панель', web_app: { url: miniAppUrl } }
-                            ]]
-                        }
-                    }
+                    chatId,
+                    '👋 *Добро пожаловать в AlgoTrade Pro!*\n\nОткройте приложение для подключения API ключей и настройки.',
+                    { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
                 );
                 return;
-            } catch (err) {
-                logger.warn('[Telegram] WebApp button failed, falling back to help', { message: err.message });
+            }
+
+            if (request?.status === 'pending') {
+                await this.bot.sendMessage(
+                    chatId,
+                    '⏳ Ваша заявка на рассмотрении. Ожидайте подтверждения от администратора.',
+                    { parse_mode: 'Markdown' }
+                );
+                return;
             }
         }
-        await this._cmdHelp(msg);
+
+        // New user (or no DB) — ask for WEEX UID
+        await this.bot.sendMessage(
+            chatId,
+            '👋 *Добро пожаловать!*\n\nДля получения доступа к AlgoTrade Pro отправьте ваш *UID аккаунта WEEX*.\n\n_Найдите его в приложении WEEX → Профиль → UID_',
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    async _handleTextMessage(msg) {
+        // Only private chats, only plain text, skip commands
+        if (!msg.text || msg.text.startsWith('/') || msg.chat.type !== 'private') return;
+        // Skip if no DB configured
+        if (!this._db) return;
+
+        const userId = String(msg.from.id);
+        const chatId = msg.chat.id;
+
+        // Ignore messages from already-approved users
+        const request = await this._db.getAccessRequest(userId).catch(() => null);
+        if (request?.status === 'approved') return;
+
+        const weexUid = msg.text.trim();
+        const requestId = `req_${userId}_${Date.now()}`;
+
+        await this._db.upsertAccessRequest({
+            requestId,
+            userId,
+            chatId: String(chatId),
+            username: msg.from.username || msg.from.first_name || userId,
+            weexUid
+        });
+
+        // Confirm to user
+        await this.bot.sendMessage(
+            chatId,
+            '✅ Заявка отправлена! Ожидайте подтверждения от администратора.',
+            { parse_mode: 'Markdown' }
+        );
+
+        // Notify admin with approve/reject buttons
+        const adminChatId = config.telegram.chatId;
+        if (!adminChatId) return;
+
+        const displayName = msg.from.username
+            ? `@${msg.from.username}`
+            : (msg.from.first_name || userId);
+
+        await this.bot.sendMessage(
+            adminChatId,
+            `🔔 *Новая заявка на доступ*\n\nПользователь: ${this._md(displayName)}\nTelegram ID: \`${userId}\`\nWEEX UID: \`${this._md(weexUid)}\``,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: '✅ Одобрить', callback_data: `approve_${userId}` },
+                        { text: '❌ Отклонить', callback_data: `reject_${userId}` }
+                    ]]
+                }
+            }
+        );
+
+        logger.info('[Telegram] access request received', { userId, weexUid, displayName });
+    }
+
+    async _handleCallbackQuery(query) {
+        await this.bot.answerCallbackQuery(query.id).catch(() => {});
+
+        const data = query.data || '';
+        const underscoreIdx = data.indexOf('_');
+        if (underscoreIdx === -1) return;
+
+        const action = data.slice(0, underscoreIdx);
+        const userId = data.slice(underscoreIdx + 1);
+
+        if (action !== 'approve' && action !== 'reject') return;
+        if (!this._db) return;
+
+        const request = await this._db.getAccessRequest(userId).catch(() => null);
+        if (!request) {
+            logger.warn('[Telegram] callback_query: access request not found', { userId });
+            return;
+        }
+
+        const status = action === 'approve' ? 'approved' : 'rejected';
+        await this._db.updateAccessRequestStatus(userId, status);
+
+        const displayName = request.username || userId;
+
+        // Edit admin message to remove buttons and show result
+        const statusText = status === 'approved'
+            ? `✅ Одобрено: ${displayName} (UID: ${request.weex_uid || '—'})`
+            : `❌ Отклонено: ${displayName}`;
+        await this.bot.editMessageText(statusText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id
+        }).catch(() => {});
+
+        // Notify the user
+        const miniAppUrl = config.multiUser?.miniAppUrl;
+        if (status === 'approved') {
+            const replyMarkup = miniAppUrl
+                ? { inline_keyboard: [[{ text: '🚀 Открыть приложение', web_app: { url: miniAppUrl } }]] }
+                : undefined;
+            await this.bot.sendMessage(
+                request.chat_id,
+                '🎉 *Доступ одобрен!*\n\nДобро пожаловать в AlgoTrade Pro. Откройте приложение для подключения API ключей WEEX.',
+                { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
+            );
+        } else {
+            await this.bot.sendMessage(
+                request.chat_id,
+                '❌ В доступе отказано. Свяжитесь с поддержкой.'
+            );
+        }
+
+        logger.info('[Telegram] access request processed', { userId, status, displayName });
     }
 
     async _cmdHelp(msg) {

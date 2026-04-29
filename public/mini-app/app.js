@@ -254,6 +254,10 @@
         document.querySelectorAll('.nav-btn').forEach(function (b) {
             b.classList.toggle('active', b.dataset.screen === name);
         });
+        // Hide bottom nav until API keys are connected — user must complete
+        // onboarding before accessing dashboard / settings.
+        var nav = document.querySelector('.bottom-nav');
+        if (nav) nav.style.display = _hasKeys ? '' : 'none';
         if (name === 'dashboard') {
             startRefresh();
         } else {
