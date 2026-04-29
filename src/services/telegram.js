@@ -155,7 +155,12 @@ class TelegramService {
 
     async _sendWelcomeByStatus(chatId, userId, request, lang) {
         const miniAppUrl = config.multiUser?.miniAppUrl;
-        if (request?.status === 'approved') {
+        // Check if user has submitted UID yet
+        if (!request || !request.weex_uid) {
+            // New user: hasn't submitted UID yet
+            await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
+        } else if (request.status === 'approved') {
+            // User approved: ready to use app
             const replyMarkup = miniAppUrl
                 ? { inline_keyboard: [[{ text: t('btnOpenApp', lang), web_app: { url: miniAppUrl } }]] }
                 : undefined;
@@ -164,10 +169,9 @@ class TelegramService {
                 t('approvedWelcome', lang),
                 { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
             );
-        } else if (request?.status === 'pending') {
-            await this.bot.sendMessage(chatId, t('pendingRequest', lang));
         } else {
-            await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
+            // User submitted UID, waiting for admin approval
+            await this.bot.sendMessage(chatId, t('pendingRequest', lang));
         }
     }
 
