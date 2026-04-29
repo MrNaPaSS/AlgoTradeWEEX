@@ -139,6 +139,20 @@ class TelegramService {
         const chatId = msg.chat.id;
         const miniAppUrl = config.multiUser?.miniAppUrl;
 
+        // Admin always has full access — skip access request flow entirely
+        const isAdmin = String(config.telegram.chatId) === userId;
+        if (isAdmin) {
+            const replyMarkup = miniAppUrl
+                ? { inline_keyboard: [[{ text: '🚀 Открыть приложение', web_app: { url: miniAppUrl } }]] }
+                : undefined;
+            await this.bot.sendMessage(
+                chatId,
+                '👋 *Добро пожаловать, администратор!*\n\nПолный доступ к AlgoTrade Pro.',
+                { parse_mode: 'Markdown', ...(replyMarkup && { reply_markup: replyMarkup }) }
+            );
+            return;
+        }
+
         // Check access status if DB is available
         if (this._db) {
             const request = await this._db.getAccessRequest(userId).catch(() => null);
@@ -183,7 +197,8 @@ class TelegramService {
         const userId = String(msg.from.id);
         const chatId = msg.chat.id;
 
-        // Ignore messages from already-approved users
+        // Ignore admin and already-approved users
+        if (String(config.telegram.chatId) === userId) return;
         const request = await this._db.getAccessRequest(userId).catch(() => null);
         if (request?.status === 'approved') return;
 
