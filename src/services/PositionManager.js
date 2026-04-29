@@ -546,9 +546,11 @@ class PositionManager {
             this._onEvent('partialClose', { position: updated, level, pnl: netPnl });
         }
 
-        // C3 fix: breakeven move goes through public modifySlTp with the
-        // tracked slOrderId so the fallback cancels ONLY the old SL.
-        if (level === 1 && typeof this._broker.modifySlTp === 'function') {
+        // After EVERY partial TP close (while position still has remaining qty),
+        // move SL to the updated exchange breakeven. WEEX recalculates breakeven
+        // after each partial close (realized PnL shifts cost basis), so TP2/TP3
+        // also update the no-loss price. Only skip when position is fully closed.
+        if (updated.status !== 'CLOSED' && typeof this._broker.modifySlTp === 'function') {
             try {
                 // Prefer the exchange's own breakeven price (already accounts for
                 // actual fill price, accumulated funding fees, and exchange fees).
@@ -562,7 +564,7 @@ class PositionManager {
                     if (exchPos?.breakEvenPrice) {
                         beSl = exchPos.breakEvenPrice;
                         logger.info('[PositionManager] Using exchange breakeven price for SL move', {
-                            symbol: position.symbol, exchangeBE: beSl
+                            symbol: position.symbol, tp: level, exchangeBE: beSl
                         });
                     }
                 } catch (beErr) {
@@ -571,34 +573,31 @@ class PositionManager {
                 if (beSl == null) {
                     beSl = this._computeBreakevenPrice(position, fillPrice);
                 }
+
+                // Only move SL if new breakeven is strictly better than current SL
+                // (never move backward — e.g. don't lower a SL already at TP1 level).
+                const currentSl = position.stopLoss;
+                const isImprovement = position.side === 'long'
+                    ? (beSl != null && (!currentSl || beSl > currentSl))
+                    : (beSl != null && (!currentSl || beSl < currentSl));
+
                 // Safety distance check — SL must stay on the correct side of
                 // the current (fill) price with a 0.1% buffer to avoid reject.
                 const buffer = fillPrice * 0.001;
                 const isLongValid = position.side === 'long' && beSl != null && beSl < (fillPrice - buffer);
                 const isShortValid = position.side === 'short' && beSl != null && beSl > (fillPrice + buffer);
 
-                if (isLongValid || isShortValid) {
-                    if (algoPath) {
-                        logger.info('[PositionManager] BE move triggered after TP1 fill (algo path)', {
-                            positionId: position.positionId, symbol: position.symbol,
-                            slOrderId: position.slOrderId, entryPrice: position.entryPrice, beSl
-                        });
-                    } else {
-                        logger.info('[PositionManager] Moving exchange SL to fee-adjusted breakeven (poll path)', {
-                            symbol: position.symbol, slOrderId: position.slOrderId,
-                            entryPrice: position.entryPrice, beSl
-                        });
-                    }
+                if (isImprovement && (isLongValid || isShortValid)) {
+                    logger.info('[PositionManager] Moving SL to updated breakeven after TP fill', {
+                        positionId: position.positionId, symbol: position.symbol, tp: level,
+                        slOrderId: position.slOrderId, currentSl, newBeSl: beSl, algoPath
+                    });
                     const res = await this._broker.modifySlTp({
                         symbol: position.symbol,
                         orderId: position.slOrderId,
                         slTriggerPrice: beSl
                     });
 
-                    // Bug 2 fix: only now — after the exchange confirms — mark
-                    // the breakeven move in DB / in-memory state. If modifySlTp
-                    // failed or was skipped, the next poll tick will retry because
-                    // slMovedToBreakeven is still false.
                     if (res && res.success) {
                         const currentRef = (this._positions.get(position.symbol) || [])
                             .find(x => x.positionId === position.positionId) || updated;
@@ -607,7 +606,7 @@ class PositionManager {
                             stopLoss: beSl
                         };
                         if (res.mode === 'replace' && res.slOrderId) {
-                            logger.info('[PositionManager] Updating slOrderId after polling replace-move', {
+                            logger.info('[PositionManager] Updating slOrderId after replace-move', {
                                 symbol: position.symbol, old: position.slOrderId, new: res.slOrderId
                             });
                             patch.slOrderId = res.slOrderId;
@@ -621,8 +620,8 @@ class PositionManager {
                         });
                     }
                 } else {
-                    logger.warn('[PositionManager] Breakeven move skipped (poll path): price too close', {
-                        symbol: position.symbol, entryPrice: position.entryPrice, fillPrice
+                    logger.debug('[PositionManager] SL move skipped: no improvement or price too close', {
+                        symbol: position.symbol, tp: level, currentSl, beSl, fillPrice
                     });
                 }
             } catch (err) {
@@ -1023,10 +1022,10 @@ class PositionManager {
         });
         this._replace(updated);
 
-        // C8 Phase 2: Move SL to fee-adjusted breakeven on exchange if TP1 hit.
-        // Pass the existing slOrderId so the fallback cancels the specific SL
-        // and does NOT wipe the remaining TP ladder (fix C3).
-        if (level === 1 && this._broker.mode === 'live') {
+        // After EVERY partial TP close (numeric orderId path), move SL to the
+        // updated exchange breakeven. WEEX recalculates breakeven after each
+        // partial close, so TP2/TP3 also shift the no-loss price.
+        if (updated.status !== 'CLOSED' && this._broker.mode === 'live') {
             try {
                 // Prefer exchange breakeven price — it accounts for actual fill,
                 // accumulated funding and exchange fees. Fall back to local formula.
@@ -1039,22 +1038,28 @@ class PositionManager {
                     if (exchPos?.breakEvenPrice) {
                         beSl = exchPos.breakEvenPrice;
                         logger.info('[PositionManager] Using exchange breakeven price for SL move (numeric path)', {
-                            symbol: position.symbol, exchangeBE: beSl
+                            symbol: position.symbol, tp: level, exchangeBE: beSl
                         });
                     }
                 } catch (_) { /* ignore, will use local formula */ }
                 if (beSl == null) {
                     beSl = this._computeBreakevenPrice(position, markPrice);
                 }
-                // Validity: SL must stay on the correct side of markPrice with a
-                // small buffer so the exchange doesn't reject the modify.
+
+                // Only move SL if new breakeven is strictly better than current SL.
+                const currentSl = position.stopLoss;
+                const isImprovement = position.side === 'long'
+                    ? (beSl != null && (!currentSl || beSl > currentSl))
+                    : (beSl != null && (!currentSl || beSl < currentSl));
+
+                // Safety distance — SL must be on the correct side of markPrice.
                 const buffer = markPrice * 0.001;
                 const isLongValid = position.side === 'long' && beSl != null && beSl < (markPrice - buffer);
                 const isShortValid = position.side === 'short' && beSl != null && beSl > (markPrice + buffer);
 
-                if (isLongValid || isShortValid) {
-                    logger.info('[PositionManager] Moving SL to fee-adjusted breakeven after TP1', {
-                        symbol: position.symbol, entryPrice: position.entryPrice, beSl, markPrice
+                if (isImprovement && (isLongValid || isShortValid)) {
+                    logger.info('[PositionManager] Moving SL to updated breakeven after TP fill (numeric path)', {
+                        symbol: position.symbol, tp: level, currentSl, newBeSl: beSl, markPrice
                     });
                     const res = await this._broker.modifySlTp({
                         symbol: position.symbol,
@@ -1062,9 +1067,6 @@ class PositionManager {
                         slTriggerPrice: beSl
                     });
 
-                    // Bug 2 fix: only mark breakeven in DB / memory AFTER exchange
-                    // confirmed the move. If it failed we leave slMovedToBreakeven=false
-                    // so a subsequent retry path can try again.
                     if (res && res.success) {
                         const currentRef = (this._positions.get(position.symbol) || [])
                             .find(x => x.positionId === position.positionId) || updated;
@@ -1087,8 +1089,8 @@ class PositionManager {
                         });
                     }
                 } else {
-                    logger.warn('[PositionManager] Breakeven move skipped: price too close to entry or already in loss', {
-                        symbol: position.symbol, entryPrice: position.entryPrice, beSl, markPrice
+                    logger.debug('[PositionManager] SL move skipped (numeric path): no improvement or price too close', {
+                        symbol: position.symbol, tp: level, currentSl, beSl, markPrice
                     });
                 }
             } catch (err) {
