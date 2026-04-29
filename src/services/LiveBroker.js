@@ -117,13 +117,17 @@ class LiveBroker {
             side: weexSide,
             positionSide: weexPositionSide,
             orderType: ORDER_TYPE.MARKET,
-            quantity,
-            slTriggerPrice: stopLoss ? stopLoss : undefined,
-            tpTriggerPrice: tpPrice ? tpPrice : undefined
+            quantity
+            // NOTE: slTriggerPrice / tpTriggerPrice are intentionally NOT sent here.
+            // Despite the old comment claiming WEEX V3 ignores them, the exchange
+            // DOES process them and creates a separate SL-Last order — resulting in
+            // two SL orders (one from this call + one from _attachSlWithRetry below).
+            // SL/TP are attached exclusively via placeTpSlOrder to keep exactly one
+            // tracked order per protection type.
         });
 
-        // C8 Phase 2 fix (Bug 1): WEEX V3 ignores slTriggerPrice in main order endpoint.
-        // We MUST place SL/TP separately via placeTpSlOrder to ensure protection.
+        // SL/TP are placed separately via placeTpSlOrder (Mark-price trigger).
+        // This is the only path — placeOrder no longer carries slTriggerPrice.
         let slOrderId = null;
         let tpOrderId = null;
 
