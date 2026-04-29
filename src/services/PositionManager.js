@@ -550,7 +550,27 @@ class PositionManager {
         // tracked slOrderId so the fallback cancels ONLY the old SL.
         if (level === 1 && typeof this._broker.modifySlTp === 'function') {
             try {
-                const beSl = this._computeBreakevenPrice(position, fillPrice);
+                // Prefer the exchange's own breakeven price (already accounts for
+                // actual fill price, accumulated funding fees, and exchange fees).
+                // Fall back to our local fee-adjusted formula only if unavailable.
+                let beSl = null;
+                try {
+                    const exchPositions = await this._broker.getOpenPositions();
+                    const exchPos = exchPositions.find(
+                        p => p.symbol === position.symbol && p.side === position.side
+                    );
+                    if (exchPos?.breakEvenPrice) {
+                        beSl = exchPos.breakEvenPrice;
+                        logger.info('[PositionManager] Using exchange breakeven price for SL move', {
+                            symbol: position.symbol, exchangeBE: beSl
+                        });
+                    }
+                } catch (beErr) {
+                    logger.debug('[PositionManager] Could not fetch exchange breakeven, using local formula', { message: beErr.message });
+                }
+                if (beSl == null) {
+                    beSl = this._computeBreakevenPrice(position, fillPrice);
+                }
                 // Safety distance check — SL must stay on the correct side of
                 // the current (fill) price with a 0.1% buffer to avoid reject.
                 const buffer = fillPrice * 0.001;
@@ -1008,7 +1028,24 @@ class PositionManager {
         // and does NOT wipe the remaining TP ladder (fix C3).
         if (level === 1 && this._broker.mode === 'live') {
             try {
-                const beSl = this._computeBreakevenPrice(position, markPrice);
+                // Prefer exchange breakeven price — it accounts for actual fill,
+                // accumulated funding and exchange fees. Fall back to local formula.
+                let beSl = null;
+                try {
+                    const exchPositions = await this._broker.getOpenPositions();
+                    const exchPos = exchPositions.find(
+                        p => p.symbol === position.symbol && p.side === position.side
+                    );
+                    if (exchPos?.breakEvenPrice) {
+                        beSl = exchPos.breakEvenPrice;
+                        logger.info('[PositionManager] Using exchange breakeven price for SL move (numeric path)', {
+                            symbol: position.symbol, exchangeBE: beSl
+                        });
+                    }
+                } catch (_) { /* ignore, will use local formula */ }
+                if (beSl == null) {
+                    beSl = this._computeBreakevenPrice(position, markPrice);
+                }
                 // Validity: SL must stay on the correct side of markPrice with a
                 // small buffer so the exchange doesn't reject the modify.
                 const buffer = markPrice * 0.001;

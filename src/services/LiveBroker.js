@@ -345,6 +345,10 @@ class LiveBroker {
                 }
                 const unrealizedPnl = Number(p.unrealizePnl ?? p.unrealizedPnl ?? p.unrealisedPnl);
                 const liquidatePrice = Number(p.liquidatePrice);
+                // WEEX returns its own breakeven price (accounts for actual fill + fees + funding).
+                // Field names seen: breakEvenPrice, breakEvenPx, bkePx, costPrice.
+                const rawBe = p.breakEvenPrice ?? p.breakEvenPx ?? p.bkePx ?? p.costPrice;
+                const breakEvenPrice = rawBe != null ? Number(rawBe) : null;
                 return {
                     symbol: p.symbol,
                     side: String(p.side || p.positionSide).toLowerCase(), // 'long' or 'short'
@@ -354,7 +358,8 @@ class LiveBroker {
                     leverage: Number(p.leverage),
                     unrealizedPnl: Number.isFinite(unrealizedPnl) ? unrealizedPnl : null,
                     liquidatePrice: Number.isFinite(liquidatePrice) ? liquidatePrice : null,
-                    marginSize: Number(p.isolatedMargin || p.marginSize) || null
+                    marginSize: Number(p.isolatedMargin || p.marginSize) || null,
+                    breakEvenPrice: Number.isFinite(breakEvenPrice) && breakEvenPrice > 0 ? breakEvenPrice : null
                 };
             });
     }
