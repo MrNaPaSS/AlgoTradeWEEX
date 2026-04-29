@@ -585,9 +585,6 @@ class TelegramService {
         const emoji = decision.direction === 'LONG' ? '📈' : '📉';
         const tps = decision.risk?.sizing?.takeProfits || [];
         const sl = decision.risk?.sizing?.stopLoss;
-        const confidence = decision.confidence != null
-            ? Math.round(Number(decision.confidence) * 100)
-            : null;
 
         let msg = `${emoji} *${decision.direction} — ${signal.symbol}* \`${signal.tf}\`\n`;
         msg += `━━━━━━━━━━━━━━━\n`;
@@ -599,7 +596,6 @@ class TelegramService {
                 msg += `🎯 TP${tp.level}: $${this._fmtNum(tp.price, 4)}  _(${tp.closePercent}%)_\n`;
             });
         }
-        if (confidence != null) msg += `\n📊 Уверенность: ${confidence}%\n`;
         msg += `⏰ ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC`;
         return msg;
     }

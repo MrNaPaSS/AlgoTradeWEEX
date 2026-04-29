@@ -129,7 +129,7 @@ describe('TelegramService.notifySignalToForum', () => {
         expect(text).toContain('44500');   // TP2
         expect(text).toContain('46000');   // TP3
         expect(text).toContain('50%');     // TP1 close%
-        expect(text).toContain('78%');     // confidence
+        expect(text).not.toContain('78%'); // confidence NOT shown
     });
 
     // ── SHORT message format ─────────────────────────────────────────────────
@@ -145,7 +145,7 @@ describe('TelegramService.notifySignalToForum', () => {
         expect(text).toContain('2650');   // entry price
         expect(text).toContain('2700');   // SL
         expect(text).toContain('2600');   // TP1
-        expect(text).toContain('65%');    // confidence
+        expect(text).not.toContain('65%'); // confidence NOT shown
     });
 
     // ── No-op cases ──────────────────────────────────────────────────────────
