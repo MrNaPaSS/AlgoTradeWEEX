@@ -526,18 +526,24 @@ class Database {
             params.push(userId);
         }
 
-        const res = this._db.exec(sql, params);
+        // sql.js exec() does NOT support bound parameters — use prepare().getAsObject()
+        const stmt = this._db.prepare(sql);
+        const row = stmt.getAsObject(params.length ? params : undefined);
+        stmt.free();
 
-        if (!res[0] || !res[0].values[0]) return null;
+        if (!row || row['total'] == null) return null;
 
-        const [total, wins, losses, totalPnl] = res[0].values[0];
+        const total    = Number(row['total']    || 0);
+        const wins     = Number(row['wins']     || 0);
+        const losses   = Number(row['losses']   || 0);
+        const totalPnl = Number(row['total_pnl']|| 0);
         return {
-            totalTrades: total || 0,
-            winTrades: wins || 0,
-            lossTrades: losses || 0,
-            totalPnl: totalPnl || 0,
+            totalTrades: total,
+            winTrades: wins,
+            lossTrades: losses,
+            totalPnl,
             winRate: total > 0 ? Math.round((wins / total) * 100) : 0,
-            closedTrades: total || 0
+            closedTrades: total
         };
     }
 
@@ -568,12 +574,15 @@ class Database {
         sql += ` ORDER BY closed_at DESC LIMIT ?`;
         params.push(Math.max(1, Math.min(500, Number(limit) || 60)));
 
-        const res = this._db.exec(sql, params);
-        if (!res[0] || !res[0].values) return [];
-        const rows = res[0].values.map(([t, p]) => ({
-            closedAt: Number(t),
-            realizedPnl: Number(p)
-        }));
+        // sql.js exec() does NOT support bound parameters — use prepare()+bind()
+        const stmt = this._db.prepare(sql);
+        stmt.bind(params);
+        const rows = [];
+        while (stmt.step()) {
+            const [t, p] = stmt.get();
+            rows.push({ closedAt: Number(t), realizedPnl: Number(p) });
+        }
+        stmt.free();
         return rows.reverse(); // oldest → newest
     }
 
@@ -689,16 +698,16 @@ class Database {
     }
 
     getUserLanguage(userId) {
-        const row = this._db.prepare(
-            'SELECT language FROM access_requests WHERE user_id = ?'
-        ).get(String(userId));
-        return row?.language || 'en';
+        // sql.js: prepare().getAsObject(params) returns {col: val} or {} when no row
+        const stmt = this._db.prepare('SELECT language FROM access_requests WHERE user_id = ?');
+        const row = stmt.getAsObject([String(userId)]);
+        stmt.free();
+        return row && row['language'] ? row['language'] : 'en';
     }
 
     setUserLanguage(userId, lang) {
-        this._db.prepare(
-            "UPDATE access_requests SET language = ? WHERE user_id = ?"
-        ).run(lang, String(userId));
+        // sql.js: run(sql, paramsArray) — params must be an array
+        this._db.run("UPDATE access_requests SET language = ? WHERE user_id = ?", [lang, String(userId)]);
         this._markDirty();
     }
 }
