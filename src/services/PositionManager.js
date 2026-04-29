@@ -146,54 +146,72 @@ class PositionManager {
                         }
                     }
                 } else {
-                    // Restore position entirely from exchange (orphaned trade after bot restart/kill)
-                    logger.info('[PositionManager] syncing missing position from exchange', { symbol: p.symbol, side: p.side });
-
-                    let slOrderId = null;
-                    let stopLoss = null;
-                    if (this._broker.mode === 'live') {
-                        try {
-                            const openOrders = await this._broker._client.getOpenOrders(p.symbol);
-                            const slOrder = openOrders.find(o => o.clientOrderId?.startsWith('sl_'));
-                            if (slOrder) {
-                                slOrderId = slOrder.orderId;
-                                stopLoss = Number(slOrder.triggerPrice || slOrder.price);
-                                logger.info('[PositionManager] restored SL from exchange for orphaned position', {
-                                    symbol: p.symbol, slOrderId, stopLoss
-                                });
-                            }
-                        } catch (err) {
-                            logger.debug('[PositionManager] SL restore failed for orphaned position', { symbol: p.symbol, message: err.message });
+                    // Possibly a race: open() holds the symbol lock while placing the
+                    // order on exchange. At that moment getOpen() won't find the
+                    // position yet, so sync would incorrectly create a phantom.
+                    // Fix: acquire the symbol lock before creating a restored position,
+                    // then re-check inside — if open() already finished by the time we
+                    // get the lock the position will be present and we skip.
+                    await this._lock(p.symbol).runExclusive(async () => {
+                        const raceCheck = this.getOpen().find(
+                            pos => pos.symbol === p.symbol && pos.side.toLowerCase() === p.side.toLowerCase()
+                        );
+                        if (raceCheck) {
+                            logger.debug('[PositionManager] syncWithExchange: position appeared while waiting for lock — skip phantom create', {
+                                symbol: p.symbol, side: p.side
+                            });
+                            return;
                         }
-                    }
 
-                    const pos = createPosition({
-                        positionId: `sync_${p.symbol}_${p.side}_${Date.now()}`,
-                        symbol: p.symbol,
-                        side: p.side,
-                        entryPrice: p.entryPrice,
-                        totalQuantity: p.totalQuantity,
-                        remainingQuantity: p.remainingQuantity,
-                        leverage: p.leverage,
-                        stopLoss,
-                        slOrderId,
-                        exchangeSlActive: Boolean(stopLoss && this._broker.mode === 'live'),
-                        mode: this._broker.mode,
-                        userId: this._userId
-                    });
-                    this._push(pos);
-                    // Persist to DB with the owning userId so stats, /me/status,
-                    // and subsequent rehydrations all see this position under
-                    // the correct user. Previously this was skipped, which
-                    // caused orphan positions (user_id=NULL) that the Mini App
-                    // filtered out.
-                    try {
-                        await this._db.insertPosition(pos);
-                    } catch (err) {
-                        logger.warn('[PositionManager] failed to persist synced position', {
-                            symbol: p.symbol, side: p.side, userId: this._userId, message: err.message
+                        // Restore position entirely from exchange (orphaned trade after bot restart/kill)
+                        logger.info('[PositionManager] syncing missing position from exchange', { symbol: p.symbol, side: p.side });
+
+                        let slOrderId = null;
+                        let stopLoss = null;
+                        if (this._broker.mode === 'live') {
+                            try {
+                                const openOrders = await this._broker._client.getOpenOrders(p.symbol);
+                                const slOrder = openOrders.find(o => o.clientOrderId?.startsWith('sl_'));
+                                if (slOrder) {
+                                    slOrderId = slOrder.orderId;
+                                    stopLoss = Number(slOrder.triggerPrice || slOrder.price);
+                                    logger.info('[PositionManager] restored SL from exchange for orphaned position', {
+                                        symbol: p.symbol, slOrderId, stopLoss
+                                    });
+                                }
+                            } catch (err) {
+                                logger.debug('[PositionManager] SL restore failed for orphaned position', { symbol: p.symbol, message: err.message });
+                            }
+                        }
+
+                        const pos = createPosition({
+                            positionId: `sync_${p.symbol}_${p.side}_${Date.now()}`,
+                            symbol: p.symbol,
+                            side: p.side,
+                            entryPrice: p.entryPrice,
+                            totalQuantity: p.totalQuantity,
+                            remainingQuantity: p.remainingQuantity,
+                            leverage: p.leverage,
+                            stopLoss,
+                            slOrderId,
+                            exchangeSlActive: Boolean(stopLoss && this._broker.mode === 'live'),
+                            mode: this._broker.mode,
+                            userId: this._userId
                         });
-                    }
+                        this._push(pos);
+                        // Persist to DB with the owning userId so stats, /me/status,
+                        // and subsequent rehydrations all see this position under
+                        // the correct user. Previously this was skipped, which
+                        // caused orphan positions (user_id=NULL) that the Mini App
+                        // filtered out.
+                        try {
+                            await this._db.insertPosition(pos);
+                        } catch (err) {
+                            logger.warn('[PositionManager] failed to persist synced position', {
+                                symbol: p.symbol, side: p.side, userId: this._userId, message: err.message
+                            });
+                        }
+                    });
                 }
             }
 
