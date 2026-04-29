@@ -44,7 +44,7 @@ class WeexFuturesClient {
      * @param {number} [opts.timeoutMs]
      * @param {Function} [opts.onEvent] — Callback for client events (circuit-open, etc.)
      */
-    constructor({ apiKey, secretKey, passphrase, baseUrl = BASE_URL_REST, timeoutMs = 15000, onEvent }) {
+    constructor({ apiKey, secretKey, passphrase, baseUrl = BASE_URL_REST, timeoutMs = 15000, onEvent, breakerOptions = {} }) {
         this._apiKey = apiKey;
         this._secretKey = secretKey;
         this._passphrase = passphrase;
@@ -74,7 +74,7 @@ class WeexFuturesClient {
 
         this._breaker = createBreaker(
             (method, path, params, data) => this._execute(method, path, params, data),
-            { name: 'weex-rest', timeout: timeoutMs + 2000 }
+            { name: 'weex-rest', timeout: timeoutMs + 2000, ...breakerOptions }
         );
 
         if (this._onEvent) {

@@ -28,9 +28,14 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                 return res.status(409).json({ success: false, error: 'Вы уже зарегистрированы. Используйте PUT /api/users/me/keys для обновления.' });
             }
 
-            // Validate keys by trying to fetch balance
+            // Validate keys by trying to fetch balance.
+            // Use high volumeThreshold so the circuit breaker never opens during
+            // a single validation attempt — otherwise retry errors mask the real WEEX message.
             const { WeexFuturesClient } = require('../api/weex/WeexFuturesClient');
-            const testClient = new WeexFuturesClient({ apiKey, secretKey, passphrase });
+            const testClient = new WeexFuturesClient({
+                apiKey, secretKey, passphrase,
+                breakerOptions: { volumeThreshold: 100, errorThresholdPercentage: 100 }
+            });
             let balance;
             try {
                 const balRes = await testClient.getBalance();
