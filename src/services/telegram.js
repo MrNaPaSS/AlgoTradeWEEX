@@ -155,11 +155,9 @@ class TelegramService {
 
     async _sendWelcomeByStatus(chatId, userId, request, lang) {
         const miniAppUrl = config.multiUser?.miniAppUrl;
-        logger.info('[Telegram] _sendWelcomeByStatus', { request, weex_uid: request?.weex_uid, status: request?.status });
         // Check if user has submitted UID yet
         if (!request || !request.weex_uid) {
             // New user: hasn't submitted UID yet
-            logger.info('[Telegram] sending newUserPrompt (no weex_uid)');
             await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
         } else if (request.status === 'approved') {
             // User approved: ready to use app
@@ -208,7 +206,6 @@ class TelegramService {
         const weexUid = text;
         const requestId = `req_${userId}_${Date.now()}`;
 
-        logger.info('[Telegram] upserting access request', { userId, weexUid, lang });
         await this._db.upsertAccessRequest({
             requestId,
             userId,
@@ -219,7 +216,6 @@ class TelegramService {
         // Preserve language after upsert (upsert resets to pending but keeps language col)
         this._db.setUserLanguage(userId, lang);
 
-        logger.info('[Telegram] sending requestSent to user');
         await this.bot.sendMessage(chatId, t('requestSent', lang));
 
         const adminChatId = config.telegram.chatId;
@@ -259,9 +255,20 @@ class TelegramService {
 
             await this.bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
 
+            // Save language preference for later when user submits UID
             if (this._db) {
+                // Check if user already has a request (with UID)
                 const existing = await this._db.getAccessRequest(userId).catch(() => null);
-                if (!existing) {
+                if (existing && existing.weex_uid) {
+                    // User already submitted UID, just changing language
+                    this._db.setUserLanguage(userId, lang);
+                    await this._sendWelcomeByStatus(chatId, userId, existing, lang);
+                } else if (existing) {
+                    // User has request but no UID yet, just save language
+                    this._db.setUserLanguage(userId, lang);
+                    await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
+                } else {
+                    // Brand new user: create minimal request just to store language
                     await this._db.upsertAccessRequest({
                         requestId: `req_${userId}_${Date.now()}`,
                         userId,
@@ -269,13 +276,13 @@ class TelegramService {
                         username: query.from.username || query.from.first_name || userId,
                         weexUid: null
                     });
+                    this._db.setUserLanguage(userId, lang);
+                    await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
                 }
-                this._db.setUserLanguage(userId, lang);
+            } else {
+                // No DB: just ask for UID in chosen language
+                await this.bot.sendMessage(chatId, t('newUserPrompt', lang), { parse_mode: 'Markdown' });
             }
-
-            const request = this._db ? await this._db.getAccessRequest(userId).catch(() => null) : null;
-            logger.info('[Telegram] lang_select: request object', { request });
-            await this._sendWelcomeByStatus(chatId, userId, request, lang);
             return;
         }
 
