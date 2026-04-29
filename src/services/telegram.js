@@ -183,13 +183,16 @@ class TelegramService {
 
         const userId = String(msg.from.id);
         const chatId = msg.chat.id;
+        const text = msg.text.trim();
 
         if (String(config.telegram.chatId) === userId) return;
         const request = await this._db.getAccessRequest(userId).catch(() => null);
+        logger.info('[Telegram] _handleTextMessage', { userId, text, request });
         if (request?.status === 'approved') return;
 
         // If user hasn't chosen a language yet, prompt them first
         if (!request || !request.language) {
+            logger.info('[Telegram] no language chosen, showing selector');
             await this.bot.sendMessage(chatId, t('chooseLanguage', 'en'), {
                 reply_markup: {
                     inline_keyboard: [[
@@ -202,9 +205,10 @@ class TelegramService {
         }
 
         const lang = request.language || 'en';
-        const weexUid = msg.text.trim();
+        const weexUid = text;
         const requestId = `req_${userId}_${Date.now()}`;
 
+        logger.info('[Telegram] upserting access request', { userId, weexUid, lang });
         await this._db.upsertAccessRequest({
             requestId,
             userId,
@@ -215,6 +219,7 @@ class TelegramService {
         // Preserve language after upsert (upsert resets to pending but keeps language col)
         this._db.setUserLanguage(userId, lang);
 
+        logger.info('[Telegram] sending requestSent to user');
         await this.bot.sendMessage(chatId, t('requestSent', lang));
 
         const adminChatId = config.telegram.chatId;
