@@ -666,7 +666,7 @@ class Database {
 
     async getAccessRequest(userId) {
         const res = this._db.exec(
-            'SELECT request_id, user_id, chat_id, username, weex_uid, status, created_at, processed_at FROM access_requests WHERE user_id = ?',
+            'SELECT request_id, user_id, chat_id, username, weex_uid, status, language, created_at, processed_at FROM access_requests WHERE user_id = ?',
             [String(userId)]
         );
         if (!res[0]?.values?.length) return null;

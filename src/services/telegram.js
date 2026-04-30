@@ -137,8 +137,8 @@ class TelegramService {
 
         const request = this._db ? await this._db.getAccessRequest(userId).catch(() => null) : null;
 
-        // No language chosen yet — show selector
-        if (!request || !request.language) {
+        // No request row yet — language hasn't been chosen
+        if (!request) {
             await this.bot.sendMessage(chatId, t('chooseLanguage', 'en'), {
                 reply_markup: {
                     inline_keyboard: [[
@@ -150,7 +150,7 @@ class TelegramService {
             return;
         }
 
-        await this._sendWelcomeByStatus(chatId, userId, request, request.language);
+        await this._sendWelcomeByStatus(chatId, userId, request, request.language || 'en');
     }
 
     async _sendWelcomeByStatus(chatId, userId, request, lang) {
@@ -185,12 +185,16 @@ class TelegramService {
 
         if (String(config.telegram.chatId) === userId) return;
         const request = await this._db.getAccessRequest(userId).catch(() => null);
-        logger.info('[Telegram] _handleTextMessage', { userId, text, request });
+        // Also read language via dedicated getter (works even if request is stale)
+        const savedLang = this._db.getUserLanguage(userId);
+        logger.info('[Telegram] _handleTextMessage', { userId, text, request, savedLang });
         if (request?.status === 'approved') return;
 
-        // If user hasn't chosen a language yet, prompt them first
-        if (!request || !request.language) {
-            logger.info('[Telegram] no language chosen, showing selector');
+        // If user hasn't chosen a language yet, prompt them first.
+        // Check both sources: savedLang (via getUserLanguage) and request.language (fixed SQL).
+        // savedLang defaults to 'en' when no row exists, so also verify a request row exists.
+        if (!request) {
+            logger.info('[Telegram] no access request row found, showing language selector');
             await this.bot.sendMessage(chatId, t('chooseLanguage', 'en'), {
                 reply_markup: {
                     inline_keyboard: [[
@@ -202,7 +206,8 @@ class TelegramService {
             return;
         }
 
-        const lang = request.language || 'en';
+        // request row exists — use language from it (now correctly fetched after SQL fix)
+        const lang = request.language || savedLang || 'en';
         const weexUid = text;
         const requestId = `req_${userId}_${Date.now()}`;
 
