@@ -265,8 +265,12 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
             res.json({
                 success: true,
                 balance,
-                positions: positions.map(p => {
+                positions: await Promise.all(positions.map(async p => {
                     const live = findLive(p.symbol, p.side);
+                    let hitTpLevels = [];
+                    try {
+                        hitTpLevels = await db.getHitTpLevels(p.positionId);
+                    } catch { /* non-fatal */ }
                     return {
                         positionId: p.positionId,
                         symbol: p.symbol,
@@ -278,6 +282,7 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                         tp1Price: p.tp1Price,
                         tp2Price: p.tp2Price,
                         tp3Price: p.tp3Price,
+                        hitTpLevels,
                         realizedPnl: p.realizedPnl,
                         unrealizedPnl: live ? live.unrealizedPnl : null,
                         liquidatePrice: live ? live.liquidatePrice : null,
@@ -285,7 +290,7 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
                         status: p.status,
                         slMovedToBreakeven: p.slMovedToBreakeven
                     };
-                }),
+                })),
                 risk: riskSnap,
                 stats: stats || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },
                 stats7d:  stats7d  || { totalTrades: 0, winTrades: 0, lossTrades: 0, totalPnl: 0, winRate: 0 },

@@ -435,6 +435,14 @@ class Database {
         );
     }
 
+    async getHitTpLevels(positionId) {
+        const rows = await this.all(
+            'SELECT tp_level FROM partial_closes WHERE position_id = ? ORDER BY tp_level ASC',
+            [positionId]
+        );
+        return rows.map(r => Number(r.tp_level));
+    }
+
     async insertDecision(d) {
         await this.run(
             `INSERT INTO decisions (decision_id, signal_id, symbol, outcome, direction, confidence,

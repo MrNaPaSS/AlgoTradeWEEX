@@ -888,9 +888,19 @@
                     ? p.entryPrice + Number(p.unrealizedPnl) / qty
                     : p.entryPrice - Number(p.unrealizedPnl) / qty;
             }
-            // Pick the furthest TP that's actually set so the bar spans the
-            // whole trade plan instead of stopping at TP1.
-            var tpEnd = p.tp3Price || p.tp2Price || p.tp1Price || null;
+            // hitTpLevels: array of TP levels already executed (e.g. [1] after TP1 hit, [1,2] after TP2 hit).
+            // Only show ticks for TP levels that have NOT yet been hit.
+            var hitLevels = Array.isArray(p.hitTpLevels) ? p.hitTpLevels : [];
+            var tp1Hit = hitLevels.indexOf(1) !== -1;
+            var tp2Hit = hitLevels.indexOf(2) !== -1;
+            var tp3Hit = hitLevels.indexOf(3) !== -1;
+
+            // tpEnd = furthest TP that still has a price set AND hasn't been hit yet.
+            // This keeps the right edge of the bar meaningful after partial closes.
+            var tpEnd = (!tp3Hit && p.tp3Price) ? p.tp3Price
+                      : (!tp2Hit && p.tp2Price) ? p.tp2Price
+                      : (!tp1Hit && p.tp1Price) ? p.tp1Price
+                      : null;
             function barPct(price) {
                 if (!p.stopLoss || !tpEnd || price == null) return null;
                 var pct = isLong
@@ -901,19 +911,20 @@
             var markPct = barPct(markPrice);
             if (markPct != null) progress = markPct;
 
-            // Vertical tick markers for each TP that exists (TP-end sits at
-            // 100 % so no label needed — the green tail of the gradient
-            // already signals it).
-            [['TP1', p.tp1Price], ['TP2', p.tp2Price], ['TP3', p.tp3Price]].forEach(function (pair) {
-                var label = pair[0], price = pair[1];
-                if (!price || price === tpEnd) return;
+            // Render tick for each TP that is NOT hit and NOT the rightmost end.
+            [['TP1', p.tp1Price, tp1Hit], ['TP2', p.tp2Price, tp2Hit], ['TP3', p.tp3Price, tp3Hit]].forEach(function (pair) {
+                var label = pair[0], price = pair[1], isHit = pair[2];
+                if (!price || isHit) return;           // skip if no price or already hit
+                if (price === tpEnd) return;            // the rightmost gets its own label below
                 var pct = barPct(price);
                 if (pct == null) return;
                 ticksHtml += '<span class="pnl-bar-tick" style="left:' + pct.toFixed(1) + '%" data-label="' + label + '"></span>';
             });
-            // Always label the rightmost TP too, so the user sees which level caps the bar.
+            // Always label the rightmost active TP at 100% so user sees which level caps the bar.
             if (tpEnd && p.stopLoss) {
-                var endLabel = tpEnd === p.tp3Price ? 'TP3' : tpEnd === p.tp2Price ? 'TP2' : 'TP1';
+                var endLabel = (tpEnd === p.tp3Price && !tp3Hit) ? 'TP3'
+                             : (tpEnd === p.tp2Price && !tp2Hit) ? 'TP2'
+                             : 'TP1';
                 ticksHtml += '<span class="pnl-bar-tick" style="left:100%" data-label="' + endLabel + '"></span>';
             }
 
