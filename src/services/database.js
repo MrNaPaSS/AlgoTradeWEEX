@@ -507,44 +507,60 @@ class Database {
     }
 
     async _aggregateStats(userId, { sinceTs = null } = {}) {
-        // Counts (total/wins/losses) — only fully CLOSED positions
-        // PnL (total_pnl) — CLOSED + PARTIAL positions that already have realized PnL
-        //   (partial TP fills accumulate realized_pnl in the position row)
-        // Period filter uses opened_at: the trade belongs to the period it was OPENED
-        let sql = `
+        const uid = userId ? String(userId) : null;
+
+        // ── 1. COUNTS + PnL from fully-CLOSED positions ────────────────────
+        //   Filter by closed_at: "trades completed in this period"
+        //   This makes "today" = trades that CLOSED today (not opened today).
+        let sqlClosed = `
             SELECT
-                SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS total,
-                SUM(CASE WHEN status = 'CLOSED' AND realized_pnl > 0 THEN 1 ELSE 0 END) AS wins,
-                SUM(CASE WHEN status = 'CLOSED' AND realized_pnl < 0 THEN 1 ELSE 0 END) AS losses,
-                SUM(COALESCE(realized_pnl, 0)) AS total_pnl
+                COUNT(*) AS total,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) AS losses,
+                COALESCE(SUM(realized_pnl), 0) AS closed_pnl
             FROM positions
-            WHERE (status = 'CLOSED' OR (status = 'PARTIAL' AND realized_pnl IS NOT NULL AND realized_pnl != 0))`;
-        const params = [];
-        if (sinceTs !== null) {
-            sql += ` AND opened_at >= ?`;
-            params.push(sinceTs);
-        }
-        if (userId) {
-            sql += ` AND user_id = ?`;
-            params.push(String(userId));
-        }
+            WHERE status = 'CLOSED'`;
+        const pClosed = [];
+        if (sinceTs !== null) { sqlClosed += ` AND closed_at >= ?`; pClosed.push(sinceTs); }
+        if (uid)              { sqlClosed += ` AND user_id = ?`;     pClosed.push(uid); }
 
-        const stmt = this._db.prepare(sql);
-        const row = stmt.getAsObject(params.length ? params : undefined);
-        stmt.free();
+        const stC  = this._db.prepare(sqlClosed);
+        const rowC = stC.getAsObject(pClosed.length ? pClosed : undefined);
+        stC.free();
 
-        if (!row || row['total'] == null) return null;
+        // ── 2. PnL from TP-fired events on still-PARTIAL positions ─────────
+        //   TP1/TP2 generates real realized PnL stored in partial_closes.
+        //   Filter by pc.closed_at so "today" = TP events that fired today.
+        let partialPnl = 0;
+        try {
+            let sqlPc = `
+                SELECT COALESCE(SUM(pc.pnl), 0) AS pc_pnl
+                FROM partial_closes pc
+                JOIN positions p ON p.position_id = pc.position_id
+                WHERE p.status = 'PARTIAL'`;
+            const pPc = [];
+            if (sinceTs !== null) { sqlPc += ` AND pc.closed_at >= ?`; pPc.push(sinceTs); }
+            if (uid)              { sqlPc += ` AND p.user_id = ?`;     pPc.push(uid); }
 
-        const total    = Number(row['total']    || 0);
-        const wins     = Number(row['wins']     || 0);
-        const losses   = Number(row['losses']   || 0);
-        const totalPnl = Number(row['total_pnl']|| 0);
+            const stPc  = this._db.prepare(sqlPc);
+            const rowPc = stPc.getAsObject(pPc.length ? pPc : undefined);
+            stPc.free();
+            partialPnl = Number(rowPc['pc_pnl'] || 0);
+        } catch { /* non-fatal — stats degrade gracefully */ }
+
+        if (!rowC) return null;
+
+        const total     = Number(rowC['total']      || 0);
+        const wins      = Number(rowC['wins']       || 0);
+        const losses    = Number(rowC['losses']     || 0);
+        const closedPnl = Number(rowC['closed_pnl'] || 0);
+
         return {
             totalTrades: total,
-            winTrades: wins,
-            lossTrades: losses,
-            totalPnl,
-            winRate: total > 0 ? Math.round((wins / total) * 100) : 0,
+            winTrades:   wins,
+            lossTrades:  losses,
+            totalPnl:    closedPnl + partialPnl,
+            winRate:     total > 0 ? Math.round((wins / total) * 100) : 0,
             closedTrades: total
         };
     }
