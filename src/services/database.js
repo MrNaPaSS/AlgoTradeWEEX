@@ -496,45 +496,39 @@ class Database {
         );
     }
 
-    async getDailyStats(userId, { includeOrphaned = false } = {}) {
+    async getDailyStats(userId) {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
-        return this._aggregateStats(userId, {
-            includeOrphaned,
-            sinceTs: todayStart.getTime()
-        });
+        return this._aggregateStats(userId, { sinceTs: todayStart.getTime() });
     }
 
-    async getAllTimeStats(userId, { includeOrphaned = false } = {}) {
-        return this._aggregateStats(userId, { includeOrphaned, sinceTs: null });
+    async getAllTimeStats(userId) {
+        return this._aggregateStats(userId, { sinceTs: null });
     }
 
-    async _aggregateStats(userId, { includeOrphaned = false, sinceTs = null } = {}) {
+    async _aggregateStats(userId, { sinceTs = null } = {}) {
+        // Counts (total/wins/losses) — only fully CLOSED positions
+        // PnL (total_pnl) — CLOSED + PARTIAL positions that already have realized PnL
+        //   (partial TP fills accumulate realized_pnl in the position row)
+        // Period filter uses opened_at: the trade belongs to the period it was OPENED
         let sql = `
             SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-                SUM(realized_pnl) as total_pnl
+                SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS total,
+                SUM(CASE WHEN status = 'CLOSED' AND realized_pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN status = 'CLOSED' AND realized_pnl < 0 THEN 1 ELSE 0 END) AS losses,
+                SUM(COALESCE(realized_pnl, 0)) AS total_pnl
             FROM positions
-            WHERE status = 'CLOSED'`;
+            WHERE (status = 'CLOSED' OR (status = 'PARTIAL' AND realized_pnl IS NOT NULL AND realized_pnl != 0))`;
         const params = [];
         if (sinceTs !== null) {
-            sql += ` AND closed_at >= ?`;
+            sql += ` AND opened_at >= ?`;
             params.push(sinceTs);
         }
         if (userId) {
-            // Optionally include "orphaned" legacy trades (no user_id) — these
-            // were closed by the single-user orchestrator before multi-user mode.
-            if (includeOrphaned) {
-                sql += ` AND (user_id = ? OR user_id IS NULL)`;
-            } else {
-                sql += ` AND user_id = ?`;
-            }
-            params.push(userId);
+            sql += ` AND user_id = ?`;
+            params.push(String(userId));
         }
 
-        // sql.js exec() does NOT support bound parameters — use prepare().getAsObject()
         const stmt = this._db.prepare(sql);
         const row = stmt.getAsObject(params.length ? params : undefined);
         stmt.free();
@@ -567,22 +561,18 @@ class Database {
      * @param {number}  [opts.limit=60]        max rows (most-recent if window has more)
      * @returns {Promise<Array<{closedAt:number, realizedPnl:number}>>}
      */
-    async getRecentClosedTrades(userId, { includeOrphaned = false, sinceTs = null, limit = 60 } = {}) {
+    async getRecentClosedTrades(userId, { sinceTs = null, limit = 60 } = {}) {
         let sql = `SELECT closed_at, realized_pnl FROM positions
                    WHERE status = 'CLOSED' AND closed_at IS NOT NULL`;
         const params = [];
         if (sinceTs !== null) { sql += ` AND closed_at >= ?`; params.push(sinceTs); }
         if (userId) {
-            if (includeOrphaned) sql += ` AND (user_id = ? OR user_id IS NULL)`;
-            else                 sql += ` AND user_id = ?`;
-            params.push(userId);
+            sql += ` AND user_id = ?`;
+            params.push(String(userId));
         }
-        // Order DESC + LIMIT to get the most-recent N, then we'll flip to ASC in JS
-        // so cumulative-sum makes sense.
         sql += ` ORDER BY closed_at DESC LIMIT ?`;
         params.push(Math.max(1, Math.min(500, Number(limit) || 60)));
 
-        // sql.js exec() does NOT support bound parameters — use prepare()+bind()
         const stmt = this._db.prepare(sql);
         stmt.bind(params);
         const rows = [];
@@ -592,6 +582,63 @@ class Database {
         }
         stmt.free();
         return rows.reverse(); // oldest → newest
+    }
+
+    /**
+     * Equity-curve events for sparkline: combines partial TP closes (from
+     * partial_closes table) with final position closes. Returns time-ordered
+     * { closedAt, realizedPnl } events so the frontend can build a cumulative
+     * PnL series with more granularity than whole-position closes alone.
+     *
+     * @param {string|number} userId
+     * @param {Object} [opts]
+     * @param {number}  [opts.sinceTs]  epoch ms lower bound (by partial-close time)
+     * @param {number}  [opts.limit]    max rows (default 200)
+     */
+    async getRecentPnlEvents(userId, { sinceTs = null, limit = 200 } = {}) {
+        const uid = String(userId);
+        const maxLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
+
+        // 1. Partial TP close events
+        let sqlPc = `
+            SELECT pc.closed_at, pc.pnl AS realized_pnl
+            FROM partial_closes pc
+            JOIN positions p ON p.position_id = pc.position_id
+            WHERE p.user_id = ?`;
+        const paramsPc = [uid];
+        if (sinceTs !== null) { sqlPc += ` AND pc.closed_at >= ?`; paramsPc.push(sinceTs); }
+        sqlPc += ` ORDER BY pc.closed_at ASC LIMIT ?`;
+        paramsPc.push(maxLimit);
+
+        const pcRows = await this.all(sqlPc, paramsPc);
+
+        // 2. Final-close events for positions NOT covered by partial_closes
+        //    (SL hit, emergency close) — only rows where realized_pnl reflects
+        //    the whole trade (no partial TP entries exist)
+        let sqlFin = `
+            SELECT p.closed_at, p.realized_pnl
+            FROM positions p
+            WHERE p.status = 'CLOSED'
+              AND p.closed_at IS NOT NULL
+              AND p.user_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM partial_closes pc2
+                  WHERE pc2.position_id = p.position_id
+              )`;
+        const paramsFin = [uid];
+        if (sinceTs !== null) { sqlFin += ` AND p.closed_at >= ?`; paramsFin.push(sinceTs); }
+        sqlFin += ` ORDER BY p.closed_at ASC LIMIT ?`;
+        paramsFin.push(maxLimit);
+
+        const finRows = await this.all(sqlFin, paramsFin);
+
+        // Merge and sort by time
+        const all = [
+            ...pcRows.map(r => ({ closedAt: Number(r.closed_at), realizedPnl: Number(r.realized_pnl) })),
+            ...finRows.map(r => ({ closedAt: Number(r.closed_at), realizedPnl: Number(r.realized_pnl) }))
+        ];
+        all.sort((a, b) => a.closedAt - b.closedAt);
+        return all.slice(-maxLimit); // keep latest N after merge
     }
 
     async debugUpdatePosition(symbol, fields, userId) {

@@ -224,11 +224,11 @@ function createUsersRouter({ userTradeEngine, db, telegram, registerLimiter }) {
 
             try {
                 const results = await Promise.all([
-                    db.getDailyStats(userId, { includeOrphaned: true }),
-                    db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 7 * DAY }),
-                    db._aggregateStats(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY }),
-                    db.getAllTimeStats(userId, { includeOrphaned: true }),
-                    db.getRecentClosedTrades(userId, { includeOrphaned: true, sinceTs: now - 30 * DAY, limit: 100 })
+                    db.getDailyStats(userId),
+                    db._aggregateStats(userId, { sinceTs: now - 7 * DAY }),
+                    db._aggregateStats(userId, { sinceTs: now - 30 * DAY }),
+                    db.getAllTimeStats(userId),
+                    db.getRecentPnlEvents(userId, { sinceTs: now - 30 * DAY, limit: 200 })
                 ]);
                 stats        = results[0] || EMPTY_STATS;
                 stats7d      = results[1] || EMPTY_STATS;
