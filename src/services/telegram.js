@@ -600,8 +600,42 @@ class TelegramService {
         await this.sendMessage(t('errMsg', 'ru', { text }));
     }
 
-    async notifyDecision(_decision) {
-        // Arbiter decision details are internal — not sent to users.
+    async notifyDecision(decision) {
+        if (!this.bot || !this.chatId) return;
+        try {
+            const outcomeEmoji = decision.outcome === 'EXECUTE' ? '✅' : decision.outcome === 'HOLD' ? '⏸' : '❌';
+            let msg = `${outcomeEmoji} *РЕШЕНИЕ: ${decision.outcome} ${decision.direction}*\n`;
+            msg += `*${decision.symbol}* \`${decision.tf}\` — conf: ${(decision.confidence * 100).toFixed(0)}%\n`;
+            msg += `━━━━━━━━━━━━━━━\n`;
+            msg += `*Голоса агентов:*\n`;
+
+            for (const v of decision.votes || []) {
+                const icon = v.direction === 'LONG' ? '🟢' : v.direction === 'SHORT' ? '🔴' : '⚪';
+                const veto = v.veto ? ' ⛔VETO' : '';
+                const conf = (v.confidence * 100).toFixed(0);
+                msg += `${icon} *${this._md(v.agent)}* — ${v.direction} ${conf}%${veto}\n`;
+                if (v.reasoning) msg += `  _${this._md(v.reasoning.slice(0, 100))}_\n`;
+            }
+
+            if (decision.arbiterReasoning) {
+                msg += `━━━━━━━━━━━━━━━\n`;
+                msg += `*LLM Debate:*\n`;
+                const debate = decision.arbiterReasoning
+                    .replace(/🐂/g, '\n🐂')
+                    .replace(/🐻/g, '\n🐻')
+                    .replace(/✅/g, '\n✅')
+                    .trim()
+                    .slice(0, 400);
+                msg += `_${this._md(debate)}_\n`;
+            }
+
+            msg += `━━━━━━━━━━━━━━━\n`;
+            msg += `LLM: ${decision.llmInvoked ? '✅' : '❌ (tally)'}`;
+
+            await this.bot.sendMessage(this.chatId, msg, { parse_mode: 'Markdown' });
+        } catch (err) {
+            logger.error('[Telegram] notifyDecision failed', { message: err.message });
+        }
     }
 
     // ─── Forum (public signal broadcast) ──────────────────────────────────────
