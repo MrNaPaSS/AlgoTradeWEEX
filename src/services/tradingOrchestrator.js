@@ -68,6 +68,19 @@ class TradingOrchestrator {
         }
     }
 
+    _computeAdaptiveThreshold(indicators) {
+        const atr = indicators?.atr;
+        const close = indicators?.close;
+        if (!Number.isFinite(atr) || !Number.isFinite(close) || close <= 0) return 3; // default
+
+        const atrPct = (atr / close) * 100;
+        // ATR % → threshold
+        if (atrPct < 0.5)  return 2; // очень спокойный рынок — входим охотнее
+        if (atrPct < 1.5)  return 3; // норма
+        if (atrPct < 3.0)  return 4; // волатильно — требуем 4 из 5 агентов
+        return 5;                    // экстремальная волатильность — только единогласие
+    }
+
     /**
      * @param {import('../domain/types').Signal} signal
      * @returns {Promise<import('../domain/types').Decision|null>}
@@ -120,12 +133,26 @@ class TradingOrchestrator {
         }
 
         const indicators = this._engine.compute(symbol, tf, candles);
+
+        // Enrich with TradingView values when provided — they come from the
+        // actual chart so they are more accurate than our candle-based re-calc.
+        // Only applied when the value is a valid finite number.
+        const tvRsi = signal.rsi;
+        const tvVo  = signal.vo;
+        const enrichedIndicators = (Number.isFinite(tvRsi) || Number.isFinite(tvVo))
+            ? Object.freeze({
+                ...indicators,
+                ...(Number.isFinite(tvRsi) ? { rsi: tvRsi } : {}),
+                ...(Number.isFinite(tvVo)  ? { volumeOscillator: tvVo } : {})
+              })
+            : indicators;
+
         const snapshot = Object.freeze({
             symbol,
             tf,
             generatedAt: Date.now(),
             candles,
-            indicators,
+            indicators: enrichedIndicators,
             triggeringSignal: signal
         });
         this._db.insertMarketSnapshot({
@@ -140,8 +167,9 @@ class TradingOrchestrator {
         const riskVote = await this._riskAgent.analyze(snapshot);
         const allVotes = [...tradingVotes, riskVote];
 
+        const adaptiveThreshold = this._computeAdaptiveThreshold(indicators);
         const decision = await this._arbiter.decide({
-            snapshot, votes: allVotes, triggeringSignal: signal
+            snapshot, votes: allVotes, triggeringSignal: signal, overrideThreshold: adaptiveThreshold
         });
         const decisionRow = {
             decisionId: decision.id,

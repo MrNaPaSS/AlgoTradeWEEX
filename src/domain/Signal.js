@@ -15,6 +15,8 @@ const signalSchema = z.object({
     longStop: z.coerce.number().positive().optional(),
     shortStop: z.coerce.number().positive().optional(),
     timestamp: z.coerce.number().int().positive().optional(),
+    rsi: z.coerce.number().optional(),
+    vo:  z.coerce.number().optional(),
     meta: z.record(z.unknown()).optional()
 });
 
@@ -42,6 +44,8 @@ function parseSignal(payload) {
         longStop: parsed.longStop,
         shortStop: parsed.shortStop,
         timestamp: parsed.timestamp || Date.now(),
+        rsi: Number.isFinite(parsed.rsi) ? parsed.rsi : undefined,
+        vo:  Number.isFinite(parsed.vo)  ? parsed.vo  : undefined,
         meta: Object.freeze(parsed.meta || {})
     });
 }

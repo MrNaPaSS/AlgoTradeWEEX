@@ -466,6 +466,19 @@ class Database {
         }
     }
 
+    async getRecentDecisions(symbol, limit = 5) {
+        return this.all(
+            `SELECT d.symbol, d.direction, d.outcome, d.confidence, d.reasoning, d.created_at,
+                    p.realized_pnl, p.closed_at
+             FROM decisions d
+             LEFT JOIN positions p ON p.decision_id = d.decision_id AND p.status = 'CLOSED'
+             WHERE d.symbol = ? AND d.outcome = 'EXECUTE'
+             ORDER BY d.created_at DESC
+             LIMIT ?`,
+            [symbol.toUpperCase(), limit]
+        );
+    }
+
     async insertMarketSnapshot({ symbol, tf, barTimestamp, indicators }) {
         await this.run(
             `INSERT INTO market_snapshots (symbol, tf, bar_timestamp, indicators_json, created_at)

@@ -94,7 +94,8 @@ const config = Object.freeze({
 
     external: Object.freeze({
         twelveDataKey: env.TWELVEDATA_API_KEY,
-        fearGreedUrl: env.FEAR_GREED_API_URL
+        fearGreedUrl: env.FEAR_GREED_API_URL,
+        newsApiKey: env.NEWS_API_KEY
     }),
 
     multiUser: Object.freeze({

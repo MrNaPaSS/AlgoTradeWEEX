@@ -15,11 +15,13 @@ class Arbiter {
      * @param {import('../llm/OpenRouterClient').OpenRouterClient} [opts.llm]
      * @param {'FAST'|'STANDARD'|'FULL'} opts.mode
      * @param {number} [opts.consensusThreshold] Minimum winning-agent count (of 4 trading agents)
+     * @param {import('../services/database').Database} [opts.db] Optional DB for historical memory
      */
-    constructor({ llm, mode = 'STANDARD', consensusThreshold = 3 } = {}) {
+    constructor({ llm, mode = 'STANDARD', consensusThreshold = 3, db = null } = {}) {
         this._llm = llm;
         this._mode = mode;
         this._consensusThreshold = consensusThreshold;
+        this._db = db;
     }
 
     setMode(mode) {
@@ -35,9 +37,10 @@ class Arbiter {
      * @param {import('../domain/types').MarketSnapshot} input.snapshot
      * @param {import('../domain/types').Vote[]} input.votes              ALL votes incl. RiskAgent
      * @param {import('../domain/types').Signal} [input.triggeringSignal]
+     * @param {number} [input.overrideThreshold] Optional dynamic threshold
      * @returns {Promise<import('../domain/types').Decision>}
      */
-    async decide({ snapshot, votes, triggeringSignal }) {
+    async decide({ snapshot, votes, triggeringSignal, overrideThreshold }) {
         const riskVote = votes.find((v) => v.agent === 'RiskAgent');
         const tradingVotes = votes.filter((v) => v.agent !== 'RiskAgent');
 
@@ -63,7 +66,9 @@ class Arbiter {
         let confidence = tally.netConfidence;
         let reasoning = tally.summary;
 
-        if (tally.winnerCount >= this._consensusThreshold && tally.winner !== 'NEUTRAL') {
+        const threshold = Number.isInteger(overrideThreshold) ? overrideThreshold : this._consensusThreshold;
+
+        if (tally.winnerCount >= threshold && tally.winner !== 'NEUTRAL') {
             outcome = 'EXECUTE';
             direction = tally.winner;
         }
@@ -74,18 +79,40 @@ class Arbiter {
             (this._mode === 'STANDARD' && (outcome === 'HOLD' || confidence < 0.5));
 
         if (needLlm && this._llm?.isConfigured) {
-            const llmResult = await this._askLlm({ snapshot, votes, tally, triggeringSignal });
+            let historicalContext = [];
+            if (this._db) {
+                try {
+                    const rows = await this._db.getRecentDecisions(snapshot.symbol, 5);
+                    historicalContext = rows.map(r => ({
+                        direction: r.direction,
+                        outcome: r.outcome,
+                        confidence: r.confidence,
+                        realized_pnl: r.realized_pnl ?? null,
+                        days_ago: Math.round((Date.now() - r.created_at) / 86400000)
+                    }));
+                } catch (err) {
+                    logger.warn('[Arbiter] failed to load historical context', { message: err.message });
+                }
+            }
+
+            const llmResult = await this._askLlm({ snapshot, votes, tally, triggeringSignal, historicalContext });
             llmInvoked = true;
-            if (llmResult) {
-                outcome = llmResult.outcome || outcome;
-                direction = llmResult.direction || direction;
-                confidence = Number.isFinite(llmResult.confidence) ? llmResult.confidence : confidence;
-                reasoning = llmResult.reasoning || reasoning;
+            
+            const llmParsed = Array.isArray(llmResult) ? llmResult[0] : llmResult;
+            if (llmParsed) {
+                outcome = llmParsed.outcome || outcome;
+                direction = llmParsed.direction || direction;
+                confidence = Number.isFinite(llmParsed.confidence) ? llmParsed.confidence : confidence;
+                reasoning = llmParsed.reasoning || reasoning;
             } else {
                 logger.info('[Arbiter] LLM недоступен — используем результаты голосования');
             }
         }
 
+        // Safety-net: under normal flow, risk.allow===false is already caught
+        // by the early-return on line 50. This guard exists as defense-in-depth
+        // in case future refactoring removes that early return or adds LLM
+        // paths that could flip outcome to EXECUTE after a risk rejection.
         if (outcome === 'EXECUTE' && (!risk || risk.allow === false)) {
             outcome = 'REJECT';
             direction = 'NEUTRAL';
@@ -144,17 +171,28 @@ class Arbiter {
         };
     }
 
-    async _askLlm({ snapshot, votes, tally, triggeringSignal }) {
+    async _askLlm({ snapshot, votes, tally, triggeringSignal, historicalContext = [] }) {
         const systemPrompt = [
             'You are the Chief Arbiter of an AI trading consilium operating on WEEX Futures.',
             'Synthesize the provided agent votes and market snapshot into a final decision.',
+            '',
+            '## Internal Debate Protocol (MANDATORY)',
+            'Before producing your final JSON, mentally simulate a debate:',
+            '  BULL CASE: List the strongest arguments FOR the winning direction.',
+            '  BEAR CASE: List the strongest counter-arguments AGAINST it (even if you disagree).',
+            '  VERDICT: Explain why the Bull or Bear case wins given the evidence.',
+            '',
+            'Include a concise summary of this debate inside the "reasoning" field IN RUSSIAN.',
+            'Format: "🐂 [bull argument] | 🐻 [bear counter] | ✅ [verdict]"',
+            '',
             'IMPORTANT: All your reasoning (the "reasoning" field) MUST BE IN RUSSIAN LANGUAGE.',
             'Respond ONLY with JSON matching this exact schema:',
             '{ "outcome": "EXECUTE"|"HOLD"|"REJECT", "direction": "LONG"|"SHORT"|"NEUTRAL", "confidence": number (0..1), "reasoning": string (IN RUSSIAN) }',
             'Guidelines:',
             '- If votes are conflicting or confidence is weak, prefer HOLD.',
             '- Do not override a Risk veto.',
-            '- confidence must reflect real conviction, not vote average.'
+            '- confidence must reflect real conviction, not vote average.',
+            '- If historical_context shows recent losses in this direction, the Bear case gets extra weight.'
         ].join('\n');
 
         const userPrompt = JSON.stringify({
@@ -170,6 +208,7 @@ class Arbiter {
                 longWeight: Number(tally.longWeight.toFixed(3)),
                 shortWeight: Number(tally.shortWeight.toFixed(3))
             },
+            historical_context: historicalContext,
             votes: votes.map((v) => ({
                 agent: v.agent,
                 direction: v.direction,

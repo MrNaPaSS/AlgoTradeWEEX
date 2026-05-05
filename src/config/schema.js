@@ -74,6 +74,7 @@ const envSchema = z.object({
 
     TWELVEDATA_API_KEY: z.string().default(''),
     FEAR_GREED_API_URL: z.string().url().default('https://api.alternative.me/fng/'),
+    NEWS_API_KEY: z.string().default(''),
 
     METRICS_ENABLED: z
         .string()

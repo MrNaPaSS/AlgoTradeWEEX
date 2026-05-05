@@ -21,6 +21,7 @@ const { TradingOrchestrator } = require('./services/tradingOrchestrator');
 const { LiveBroker } = require('./services/liveBroker');
 const { PaperBroker } = require('./services/paperBroker');
 const { OpenRouterClient } = require('./llm/OpenRouterClient');
+const { FearGreedClient } = require('./api/sentiment/FearGreedClient');
 const { Arbiter } = require('./agents/Arbiter');
 const telegram = require('./services/telegram');
 
@@ -29,6 +30,7 @@ const { TechnicalAgent } = require('./agents/TechnicalAgent');
 const { BlackMirrorAgent } = require('./agents/BlackMirrorAgent');
 const { ChandelierAgent } = require('./agents/ChandelierAgent');
 const { SentimentAgent } = require('./agents/SentimentAgent');
+const { NewsAgent } = require('./agents/NewsAgent');
 const { RiskAgent } = require('./agents/RiskAgent');
 
 const { UserTradeEngine } = require('./services/userTradeEngine');
@@ -168,21 +170,23 @@ async function bootstrap() {
     // 3. Agents
     const arbiter = new Arbiter({
         llm: openRouter,
-        mode: 'FAST',
-        consensusThreshold: 1
+        mode: 'STANDARD',
+        consensusThreshold: 3,
+        db: db
     });
 
     const technicalAgent = new TechnicalAgent();
     const blackMirrorAgent = new BlackMirrorAgent();
     const chandelierAgent = new ChandelierAgent();
-    const sentimentAgent = new SentimentAgent();
+    const sentimentAgent = new SentimentAgent({ fearGreedClient: new FearGreedClient() });
+    const newsAgent = new NewsAgent({ apiToken: config.external.newsApiKey, llm: openRouter });
     const riskAgent = new RiskAgent({
         riskGuard,
         riskConfig: config.risk,
         getAvailableBalanceUsd
     });
 
-    const tradingAgents = [technicalAgent, blackMirrorAgent, chandelierAgent, sentimentAgent];
+    const tradingAgents = [technicalAgent, blackMirrorAgent, chandelierAgent, sentimentAgent, newsAgent];
 
     // 4. Orchestrator
     const orchestrator = new TradingOrchestrator({
