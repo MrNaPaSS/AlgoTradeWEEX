@@ -136,16 +136,18 @@ class TradingOrchestrator {
 
         // Enrich with TradingView values when provided — they come from the
         // actual chart so they are more accurate than our candle-based re-calc.
-        // Only applied when the value is a valid finite number.
+        // signal.price is always used as close: it is the most recent price at
+        // alert time, while indicators.close is the last completed Weex candle
+        // which can be up to 1h stale on hourly charts — causing SL/TP to be
+        // calculated from a price far from the actual entry.
         const tvRsi = signal.rsi;
         const tvVo  = signal.vo;
-        const enrichedIndicators = (Number.isFinite(tvRsi) || Number.isFinite(tvVo))
-            ? Object.freeze({
-                ...indicators,
-                ...(Number.isFinite(tvRsi) ? { rsi: tvRsi } : {}),
-                ...(Number.isFinite(tvVo)  ? { volumeOscillator: tvVo } : {})
-              })
-            : indicators;
+        const enrichedIndicators = Object.freeze({
+            ...indicators,
+            close: signal.price,                                          // always use TV price
+            ...(Number.isFinite(tvRsi) ? { rsi: tvRsi } : {}),
+            ...(Number.isFinite(tvVo)  ? { volumeOscillator: tvVo } : {})
+        });
 
         const snapshot = Object.freeze({
             symbol,
