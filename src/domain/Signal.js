@@ -2,6 +2,15 @@ const { nanoid } = require('nanoid');
 const { z } = require('zod');
 
 const SIGNAL_TYPES = ['CE_BUY', 'CE_SELL', 'BM_LONG', 'BM_SHORT', 'buy', 'sell', 'long', 'short'];
+
+// TradingView sends {{interval}} as minutes: "1", "5", "60", "240" etc.
+// Normalize to internal format: "1m", "5m", "1h", "4h" etc.
+const TV_TF_MAP = { '1':'1m','3':'3m','5':'5m','10':'10m','15':'15m','30':'30m',
+                    '60':'1h','120':'2h','240':'4h','480':'8h','720':'12h',
+                    'D':'1D','1D':'1D','W':'1W','1W':'1W' };
+function normalizeTf(tf) {
+    return TV_TF_MAP[tf] || tf;
+}
 const SIGNAL_SOURCES = ['tradingview', 'internal', 'manual', 'backtest'];
 
 const signalSchema = z.object({
@@ -39,7 +48,7 @@ function parseSignal(payload) {
         source: parsed.source,
         signalType: type,
         symbol: parsed.symbol.toUpperCase(),
-        tf: parsed.tf,
+        tf: normalizeTf(parsed.tf),
         price: parsed.price,
         longStop: parsed.longStop,
         shortStop: parsed.shortStop,
