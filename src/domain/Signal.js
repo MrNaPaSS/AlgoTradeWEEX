@@ -26,6 +26,8 @@ const signalSchema = z.object({
     timestamp: z.coerce.number().int().positive().optional(),
     rsi: z.coerce.number().optional(),
     vo:  z.coerce.number().optional(),
+    bmScoreLong:  z.preprocess(v => (v === null ? undefined : v), z.coerce.number().optional()),
+    bmScoreShort: z.preprocess(v => (v === null ? undefined : v), z.coerce.number().optional()),
     meta: z.record(z.unknown()).optional()
 });
 
@@ -55,6 +57,8 @@ function parseSignal(payload) {
         timestamp: parsed.timestamp || Date.now(),
         rsi: Number.isFinite(parsed.rsi) ? parsed.rsi : undefined,
         vo:  Number.isFinite(parsed.vo)  ? parsed.vo  : undefined,
+        bmScoreLong:  Number.isFinite(parsed.bmScoreLong)  ? parsed.bmScoreLong  : undefined,
+        bmScoreShort: Number.isFinite(parsed.bmScoreShort) ? parsed.bmScoreShort : undefined,
         meta: Object.freeze(parsed.meta || {})
     });
 }

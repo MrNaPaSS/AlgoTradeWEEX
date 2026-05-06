@@ -142,11 +142,20 @@ class TradingOrchestrator {
         // calculated from a price far from the actual entry.
         const tvRsi = signal.rsi;
         const tvVo  = signal.vo;
+        const tvBmL = signal.bmScoreLong;
+        const tvBmS = signal.bmScoreShort;
         const enrichedIndicators = Object.freeze({
             ...indicators,
             close: signal.price,                                          // always use TV price
             ...(Number.isFinite(tvRsi) ? { rsi: tvRsi } : {}),
-            ...(Number.isFinite(tvVo)  ? { volumeOscillator: tvVo } : {})
+            ...(Number.isFinite(tvVo)  ? { volumeOscillator: tvVo } : {}),
+            ...(Number.isFinite(tvBmL) || Number.isFinite(tvBmS) ? {
+                blackMirror: Object.freeze({
+                    ...indicators.blackMirror,
+                    ...(Number.isFinite(tvBmL) ? { scoreLong:  tvBmL, longSignal:  tvBmL  >= 3 } : {}),
+                    ...(Number.isFinite(tvBmS) ? { scoreShort: tvBmS, shortSignal: tvBmS >= 3 } : {})
+                })
+            } : {})
         });
 
         const snapshot = Object.freeze({

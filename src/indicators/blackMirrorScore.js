@@ -69,7 +69,7 @@ function blackMirrorScore(
         const rsiReboundUp =
             Number.isFinite(rPrev) && ((rPrev <= rsiLow && r > rsiLow) || (r > rsiLow && r > rPrev));
         const volOkUp = useVolFilter
-            ? Number.isFinite(voVal) && Number.isFinite(voSmaVal) && voVal > 0 && voVal > voSmaVal
+            ? Number.isFinite(voVal) && Number.isFinite(voSmaVal) && voVal > voSmaVal
             : true;
         const sL = (trendUp ? 1 : 0) + (crossUp ? 1 : 0) + (rsiReboundUp ? 1 : 0) + (volOkUp ? 1 : 0);
         scoreLong[i] = sL;
@@ -81,7 +81,7 @@ function blackMirrorScore(
         const rsiReboundDn =
             Number.isFinite(rPrev) && ((rPrev >= rsiHigh && r < rsiHigh) || (r < rsiHigh && r < rPrev));
         const volOkDn = useVolFilter
-            ? Number.isFinite(voVal) && Number.isFinite(voSmaVal) && voVal < 0 && voVal < voSmaVal
+            ? Number.isFinite(voVal) && Number.isFinite(voSmaVal) && voVal < voSmaVal
             : true;
         const sS = (trendDn ? 1 : 0) + (crossDn ? 1 : 0) + (rsiReboundDn ? 1 : 0) + (volOkDn ? 1 : 0);
         scoreShort[i] = sS;
