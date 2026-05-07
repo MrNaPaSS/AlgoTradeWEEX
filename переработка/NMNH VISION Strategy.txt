@@ -1,0 +1,259 @@
+//@version=6
+strategy("NMNH VISION — Strategy", overlay=true,
+     initial_capital=100000,
+     default_qty_type=strategy.fixed,
+     default_qty_value=1,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,
+     slippage=2,
+     max_bars_back=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+ceLength   = input.int(22,   "ATR Period",       group="CE Settings")
+ceMult     = input.float(3.0, "ATR Multiplier",  group="CE Settings", step=0.1)
+
+emaFastLen = input.int(8,    "EMA Fast",         group="BM Score")
+emaSlowLen = input.int(21,   "EMA Slow",         group="BM Score")
+emaTrendLen= input.int(50,   "EMA Trend",        group="BM Score")
+rsiLen     = input.int(14,   "RSI Length",       group="BM Score")
+rsiOB      = input.float(65, "RSI Overbought",   group="BM Score")
+rsiOS      = input.float(35, "RSI Oversold",     group="BM Score")
+
+riskPct     = input.float(2.0, "Риск на сделку %", group="Risk Management", step=0.5, minval=0.1, maxval=10.0)
+
+useHtfFilter = input.bool(true, "HTF Filter (Daily)", group="HTF Filter")
+htfEmaFastLen = input.int(8,  "HTF EMA Fast",     group="HTF Filter")
+htfEmaSlowLen = input.int(21, "HTF EMA Slow",     group="HTF Filter")
+
+sigMinScore = input.int(4,   "Мин. BM Score",    group="Signal", minval=1, maxval=4)
+sigLookback = input.int(1,   "Score Lookback",   group="Signal", minval=1, maxval=20)
+useEmaFilter= input.bool(true,"Фильтр EMA50",    group="Signal")
+
+dateFrom = input.time(timestamp("2024-01-01"), "Начало периода", group="Период")
+dateTo   = input.time(timestamp("2026-12-31"), "Конец периода",  group="Период")
+inRange  = time >= dateFrom and time <= dateTo
+
+rr1 = input.float(1.0, "TP1 RR", group="Take Profits", step=0.5, minval=0.1)
+rr2 = input.float(2.0, "TP2 RR", group="Take Profits", step=0.5, minval=0.1)
+rr3 = input.float(3.0, "TP3 RR", group="Take Profits", step=0.5, minval=0.1)
+
+tp1Pct = input.float(33, "TP1 закрыть %", group="Take Profits", minval=1, maxval=100)
+tp2Pct = input.float(33, "TP2 закрыть %", group="Take Profits", minval=1, maxval=100)
+// TP3 закрывает остаток
+
+// ============================================================================
+// CHANDELIER EXIT
+// ============================================================================
+atr = ceMult * ta.atr(ceLength)
+
+longStop     = ta.highest(close, ceLength) - atr
+longStopPrev = nz(longStop[1], longStop)
+longStop    := close[1] > longStopPrev ? math.max(longStop, longStopPrev) : longStop
+
+shortStop     = ta.lowest(close, ceLength) + atr
+shortStopPrev = nz(shortStop[1], shortStop)
+shortStop    := close[1] < shortStopPrev ? math.min(shortStop, shortStopPrev) : shortStop
+
+var int dir = 1
+dir := close > shortStopPrev ? 1 : close < longStopPrev ? -1 : dir
+
+buySignal  = dir == 1 and dir[1] == -1
+sellSignal = dir == -1 and dir[1] == 1
+
+// ============================================================================
+// BM SCORE
+// ============================================================================
+emaFast  = ta.ema(close, emaFastLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+emaTrend = ta.ema(close, emaTrendLen)
+rsi      = ta.rsi(close, rsiLen)
+
+vol__    = nz(volume)
+vo       = (ta.ema(vol__, 5) - ta.ema(vol__, 14)) / ta.ema(vol__, 14) * 100.0
+voSMa    = ta.sma(vo, 10)
+
+trendUp    = emaFast > emaSlow and close > emaTrend
+emaCrossUp = ta.crossover(emaFast, emaSlow)
+rsiRebU    = ta.crossover(rsi, rsiOS) or (rsi > rsiOS and rsi > rsi[1])
+volOKU     = vo > 0 and vo > voSMa
+scoreU     = (trendUp?1:0) + (emaCrossUp?1:0) + (rsiRebU?1:0) + (volOKU?1:0)
+
+trendDn    = emaFast < emaSlow and close < emaTrend
+emaCrossDn = ta.crossunder(emaFast, emaSlow)
+rsiRebD    = ta.crossunder(rsi, rsiOB) or (rsi < rsiOB and rsi < rsi[1])
+volOKD     = vo < 0 and vo < voSMa
+scoreD     = (trendDn?1:0) + (emaCrossDn?1:0) + (rsiRebD?1:0) + (volOKD?1:0)
+
+// ============================================================================
+// HTF FILTER — дневной тренд
+// ============================================================================
+htfFast = request.security(syminfo.tickerid, "D", ta.ema(close, htfEmaFastLen), lookahead=barmerge.lookahead_off)
+htfSlow = request.security(syminfo.tickerid, "D", ta.ema(close, htfEmaSlowLen), lookahead=barmerge.lookahead_off)
+
+htfOkBuy  = useHtfFilter ? htfFast > htfSlow : true
+htfOkSell = useHtfFilter ? htfFast < htfSlow : true
+
+// ============================================================================
+// SIGNAL LOGIC
+// ============================================================================
+_emaOkBuy   = useEmaFilter ? close > emaTrend : true
+_emaOkSell  = useEmaFilter ? close < emaTrend : true
+_buyScoreOk = ta.highest(scoreU, sigLookback) >= sigMinScore
+_selScoreOk = ta.highest(scoreD, sigLookback) >= sigMinScore
+
+sigBuy  = buySignal  and _buyScoreOk  and _emaOkBuy  and htfOkBuy  and inRange
+sigSell = sellSignal and _selScoreOk  and _emaOkSell and htfOkSell and inRange
+
+// ============================================================================
+// STATE — отслеживаем уровни активной сделки
+// ============================================================================
+var int   signalCount = 0
+var float entryPrice  = na
+var float slLevel     = na
+var float tp1Level    = na
+var float tp2Level    = na
+var float tp3Level    = na
+var bool  tp1Done     = false
+var bool  tp2Done     = false
+var int   tradeDir    = 0   // 1 = long, -1 = short
+
+// ============================================================================
+// ENTRIES
+// ============================================================================
+if sigBuy and strategy.position_size == 0
+    signalCount += 1
+    entryPrice := close
+    slLevel    := longStop
+    dist       = math.abs(close - longStop)
+    tp1Level   := close + dist * rr1
+    tp2Level   := close + dist * rr2
+    tp3Level   := close + dist * rr3
+    tp1Done    := false
+    tp2Done    := false
+    tradeDir   := 1
+    riskAmt    = strategy.equity * riskPct / 100.0
+    qty        = riskAmt / dist
+    strategy.entry("BUY", strategy.long, qty=qty)
+
+if sigSell and strategy.position_size == 0
+    signalCount += 1
+    entryPrice := close
+    slLevel    := shortStop
+    dist       = math.abs(close - shortStop)
+    tp1Level   := close - dist * rr1
+    tp2Level   := close - dist * rr2
+    tp3Level   := close - dist * rr3
+    tp1Done    := false
+    tp2Done    := false
+    tradeDir   := -1
+    riskAmt    = strategy.equity * riskPct / 100.0
+    qty        = riskAmt / dist
+    strategy.entry("SELL", strategy.short, qty=qty)
+
+// ============================================================================
+// EXITS — частичные тейки + BE стоп
+// ============================================================================
+if strategy.position_size > 0  // LONG активен
+    // SL
+    strategy.exit("BUY_SL", from_entry="BUY", stop=slLevel)
+
+    // TP1
+    if not tp1Done and high >= tp1Level
+        tp1Done  := true
+        strategy.close("BUY", comment="TP1", qty_percent=tp1Pct)
+
+    // TP2
+    if tp1Done and not tp2Done and high >= tp2Level
+        tp2Done := true
+        strategy.close("BUY", comment="TP2", qty_percent=tp2Pct)
+
+    // TP3 — закрываем остаток
+    if tp2Done and high >= tp3Level
+        strategy.close("BUY", comment="TP3")
+
+if strategy.position_size < 0  // SHORT активен
+    // SL
+    strategy.exit("SELL_SL", from_entry="SELL", stop=slLevel)
+
+    // TP1
+    if not tp1Done and low <= tp1Level
+        tp1Done  := true
+        strategy.close("SELL", comment="TP1", qty_percent=tp1Pct)
+
+    // TP2
+    if tp1Done and not tp2Done and low <= tp2Level
+        tp2Done := true
+        strategy.close("SELL", comment="TP2", qty_percent=tp2Pct)
+
+    // TP3 — закрываем остаток
+    if tp2Done and low <= tp3Level
+        strategy.close("SELL", comment="TP3")
+
+// ============================================================================
+// ВИЗУАЛИЗАЦИЯ
+// ============================================================================
+plot(emaFast,  "EMA Fast",  color.new(color.teal,   0))
+plot(emaSlow,  "EMA Slow",  color.new(color.orange, 0))
+plot(emaTrend, "EMA Trend", color.new(color.gray,  20))
+plot(dir == 1  ? longStop  : na, "Long Stop",  color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+plot(dir == -1 ? shortStop : na, "Short Stop", color=color.new(color.red,   0), linewidth=2, style=plot.style_linebr)
+
+plotshape(sigBuy,  title="BUY Signal",  location=location.belowbar, style=shape.triangleup,   size=size.small, color=color.green)
+plotshape(sigSell, title="SELL Signal", location=location.abovebar, style=shape.triangledown, size=size.small, color=color.red)
+
+// ============================================================================
+// ТАБЛИЦА СТАТИСТИКИ
+// ============================================================================
+var table stats = table.new(position.top_right, 2, 9,
+     bgcolor=color.new(color.black, 70), border_color=color.gray, border_width=1)
+
+wins   = 0
+losses = 0
+if strategy.closedtrades > 0
+    for i = 0 to strategy.closedtrades - 1
+        if strategy.closedtrades.profit(i) > 0
+            wins += 1
+        else
+            losses += 1
+
+total = wins + losses
+wr    = total > 0 ? wins / total * 100.0 : 0.0
+lPct  = total > 0 ? losses / total * 100.0 : 0.0
+pf    = strategy.grossloss != 0 ? math.abs(strategy.grossprofit / strategy.grossloss) : 0.0
+ev    = (wr / 100.0) * rr3 - (lPct / 100.0) * 1.0
+evStr = (ev >= 0 ? "+" : "") + str.tostring(math.round(ev, 2)) + "R"
+
+wrColor = wr >= 50.0 ? color.green : color.red
+pfColor = pf >= 1.5 ? color.green : pf >= 1.0 ? color.orange : color.red
+evColor = ev >= 0 ? color.green : color.red
+
+table.cell(stats, 0, 0, "NMNH VISION",      text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
+table.cell(stats, 1, 0, "TP1/2/3",           text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
+
+table.cell(stats, 0, 1, "Сигналов",          text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 1, str.tostring(signalCount), text_color=color.yellow, text_size=size.small)
+
+table.cell(stats, 0, 2, "Закрытых сделок",   text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 2, str.tostring(total),  text_color=color.white,  text_size=size.small)
+
+table.cell(stats, 0, 3, "Win Rate",           text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 3, str.tostring(math.round(wr, 1)) + "%", text_color=wrColor, text_size=size.small)
+
+table.cell(stats, 0, 4, "W / L",             text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 4, str.tostring(wins) + " / " + str.tostring(losses), text_color=color.white, text_size=size.small)
+
+table.cell(stats, 0, 5, "Ожид. ценность",    text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 5, evStr,                text_color=evColor, text_size=size.small)
+
+table.cell(stats, 0, 6, "Profit Factor",      text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 6, str.tostring(math.round(pf, 2)), text_color=pfColor, text_size=size.small)
+
+table.cell(stats, 0, 7, "Net Profit",         text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 7, str.tostring(math.round(strategy.netprofit, 0)) + "$",
+     text_color=strategy.netprofit >= 0 ? color.green : color.red, text_size=size.small)
+
+table.cell(stats, 0, 8, "Max DD",             text_color=color.silver, text_size=size.small)
+table.cell(stats, 1, 8, str.tostring(math.round(strategy.max_drawdown_percent, 1)) + "%",
+     text_color=color.red, text_size=size.small)

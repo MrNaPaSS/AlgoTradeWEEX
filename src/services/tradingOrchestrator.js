@@ -86,7 +86,8 @@ class TradingOrchestrator {
      * @returns {Promise<import('../domain/types').Decision|null>}
      */
     async handleSignal(signal) {
-        const symbol = signal.symbol.toUpperCase();
+        // Normalize symbol: strip TradingView exchange suffixes (.P = perpetual, .F = futures, etc.)
+        const symbol = signal.symbol.toUpperCase().replace(/\.[A-Z]+$/, '');
         const tf = signal.tf;
 
         // --- Symbol Whitelist Check -----------------------------------------

@@ -1,0 +1,166 @@
+//@version=6
+strategy("NMNH PULLBACK — Strategy", overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,
+     slippage=2,
+     max_bars_back=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+ceLength = input.int(22,    "ATR Period",     group="CE Settings")
+ceMult   = input.float(3.0, "ATR Multiplier", group="CE Settings", step=0.1)
+
+rsiBuyLevel  = input.int(45, "RSI отскок (лонг)",  group="Signal", minval=30, maxval=55)
+rsiSellLevel = input.int(55, "RSI отскок (шорт)", group="Signal", minval=45, maxval=70)
+swingBars    = input.int(5,  "Swing Low/High баров", group="Signal", minval=3, maxval=20)
+
+rrTP = input.float(2.0, "Target RR", group="Exit", step=0.5, minval=0.5)
+
+dateFrom = input.time(timestamp("2026-01-01"), "Начало периода", group="Период")
+dateTo   = input.time(timestamp("2026-12-31"), "Конец периода",  group="Период")
+inRange  = time >= dateFrom and time <= dateTo
+
+// ============================================================================
+// CHANDELIER EXIT — фильтр направления тренда
+// ============================================================================
+atr = ceMult * ta.atr(ceLength)
+
+longStop      = ta.highest(close, ceLength) - atr
+longStopPrev  = nz(longStop[1], longStop)
+longStop     := close[1] > longStopPrev ? math.max(longStop, longStopPrev) : longStop
+
+shortStop     = ta.lowest(close, ceLength) + atr
+shortStopPrev = nz(shortStop[1], shortStop)
+shortStop    := close[1] < shortStopPrev ? math.min(shortStop, shortStopPrev) : shortStop
+
+var int dir = 1
+dir := close > shortStopPrev ? 1 : close < longStopPrev ? -1 : dir
+
+// ============================================================================
+// ИНДИКАТОРЫ
+// ============================================================================
+emaFast  = ta.ema(close, 8)
+emaSlow  = ta.ema(close, 21)
+emaTrend = ta.ema(close, 50)
+rsi      = ta.rsi(close, 14)
+atrVal   = ta.atr(ceLength)
+
+// ============================================================================
+// ЛОГИКА ВХОДА — откат в тренде
+// ============================================================================
+// Тренд подтверждён: CE dir + EMA выровнены
+trendUp = dir == 1 and close > emaTrend and emaFast > emaSlow
+trendDn = dir == -1 and close < emaTrend and emaFast < emaSlow
+
+// Вход: RSI откатился и отскочил обратно
+rsiBounceBuy  = ta.crossover(rsi, rsiBuyLevel) and rsi < 65.0
+rsiBounceSell = ta.crossunder(rsi, rsiSellLevel) and rsi > 35.0
+
+// Стоп за ближайший свинг + небольшой буфер
+swingLow  = ta.lowest(low,  swingBars)
+swingHigh = ta.highest(high, swingBars)
+
+noPos = strategy.position_size == 0
+
+sigBuy  = trendUp and rsiBounceBuy  and noPos and inRange
+sigSell = trendDn and rsiBounceSell and noPos and inRange
+
+// ============================================================================
+// ВХОДЫ И ВЫХОДЫ
+// ============================================================================
+if sigBuy
+    sl   = swingLow - atrVal * 0.2
+    dist = math.abs(close - sl)
+    strategy.entry("TRADE", strategy.long)
+    strategy.exit("EXIT", from_entry="TRADE", stop=sl, limit=close + dist * rrTP)
+
+if sigSell
+    sl   = swingHigh + atrVal * 0.2
+    dist = math.abs(close - sl)
+    strategy.entry("TRADE", strategy.short)
+    strategy.exit("EXIT", from_entry="TRADE", stop=sl, limit=close - dist * rrTP)
+
+// ============================================================================
+// ВИЗУАЛИЗАЦИЯ
+// ============================================================================
+plot(emaFast,  "EMA Fast",  color.new(color.teal,   0))
+plot(emaSlow,  "EMA Slow",  color.new(color.orange, 0))
+plot(emaTrend, "EMA Trend", color.new(color.gray,  20))
+
+plot(dir == 1  ? longStop  : na, "Long Stop",
+     color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+plot(dir == -1 ? shortStop : na, "Short Stop",
+     color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+
+plotshape(sigBuy,  title="BUY",  location=location.belowbar,
+     style=shape.triangleup,   size=size.small, color=color.green)
+plotshape(sigSell, title="SELL", location=location.abovebar,
+     style=shape.triangledown, size=size.small, color=color.red)
+
+// ============================================================================
+// ТАБЛИЦА СТАТИСТИКИ
+// ============================================================================
+var table stats = table.new(position.top_right, 2, 8,
+     bgcolor=color.new(color.black, 70), border_color=color.gray, border_width=1)
+
+if barstate.islast
+    wins   = 0
+    losses = 0
+    for i = 0 to strategy.closedtrades - 1
+        if strategy.closedtrades.profit(i) > 0
+            wins += 1
+        else
+            losses += 1
+
+    total = wins + losses
+    wr    = total > 0 ? wins / total * 100.0 : 0.0
+    lPct  = total > 0 ? losses / total * 100.0 : 0.0
+
+    pf = strategy.grossloss != 0 ?
+         math.abs(strategy.grossprofit / strategy.grossloss) : 0.0
+
+    minWR = 1.0 / (1.0 + rrTP) * 100.0
+
+    ev    = (wr / 100.0) * rrTP - (lPct / 100.0) * 1.0
+    evStr = (ev >= 0 ? "+" : "") + str.tostring(math.round(ev, 2)) + "R"
+
+    wrColor = wr >= minWR ? color.green : color.red
+    pfColor = pf >= 1.5 ? color.green : pf >= 1.0 ? color.orange : color.red
+    evColor = ev >= 0 ? color.green : color.red
+
+    table.cell(stats, 0, 0, "NMNH PULLBACK",
+         text_color=color.white, text_size=size.small, bgcolor=color.new(color.purple, 60))
+    table.cell(stats, 1, 0, "RR " + str.tostring(rrTP, "#.#") + ":1",
+         text_color=color.white, text_size=size.small, bgcolor=color.new(color.purple, 60))
+
+    table.cell(stats, 0, 1, "Win Rate",       text_color=color.silver, text_size=size.small)
+    table.cell(stats, 1, 1, str.tostring(math.round(wr, 1)) + "%",
+         text_color=wrColor, text_size=size.small)
+
+    table.cell(stats, 0, 2, "Мин. WR (БУ)",   text_color=color.silver, text_size=size.small)
+    table.cell(stats, 1, 2, str.tostring(math.round(minWR, 1)) + "%",
+         text_color=color.gray, text_size=size.small)
+
+    table.cell(stats, 0, 3, "W / L",          text_color=color.silver, text_size=size.small)
+    table.cell(stats, 1, 3, str.tostring(wins) + " / " + str.tostring(losses),
+         text_color=color.white, text_size=size.small)
+
+    table.cell(stats, 0, 4, "Ожид. ценность", text_color=color.silver, text_size=size.small)
+    table.cell(stats, 1, 4, evStr,
+         text_color=evColor, text_size=size.small)
+
+    table.cell(stats, 0, 5, "Profit Factor",  text_color=color.silver, text_size=size.small)
+    table.cell(stats, 1, 5, str.tostring(math.round(pf, 2)),
+         text_color=pfColor, text_size=size.small)
+
+    table.cell(stats, 0, 6, "Net Profit",     text_color=color.silver, text_size=size.small)
+    table.cell(stats, 1, 6, str.tostring(math.round(strategy.netprofit, 0)) + "$",
+         text_color=strategy.netprofit >= 0 ? color.green : color.red, text_size=size.small)
+
+    table.cell(stats, 0, 7, "Max DD",         text_color=color.silver, text_size=size.small)
+    table.cell(stats, 1, 7, str.tostring(math.round(strategy.max_drawdown_percent, 1)) + "%",
+         text_color=color.red, text_size=size.small)

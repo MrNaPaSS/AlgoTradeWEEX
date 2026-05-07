@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx jest:*)",
+      "Bash(node live_pipeline_check.js LONG BTCUSDT)",
+      "Bash(node live_pipeline_check.js SHORT ETHUSDT)",
+      "WebFetch(domain:ru.tradingview.com)",
+      "WebFetch(domain:www.tradingview.com)",
+      "Bash(node -e \"const {parseSignal} = require\\('./src/domain/Signal'\\); const s = parseSignal\\({secret:'x',signalType:'CE_BUY',symbol:'BTCUSDT',tf:'1h',price:96000,longStop:95000,shortStop:97000,rsi:54.3,vo:12.7}\\); console.log\\('rsi:', s.rsi, 'vo:', s.vo\\);\")",
+      "Bash(node -e \"const {parseSignal} = require\\('./src/domain/Signal'\\); const s = parseSignal\\({secret:'x',signalType:'CE_BUY',symbol:'BTCUSDT',tf:'1h',price:96000}\\); console.log\\('rsi:', s.rsi, 'vo:', s.vo, '← undefined = backward compat OK'\\);\")",
+      "Bash(node -e ':*)"
+    ]
+  }
+}

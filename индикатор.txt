@@ -164,6 +164,8 @@ plot(emaSlow, "EMA Slow", color.new(color.orange, 0))
 plot(emaTrend, "EMA Trend", color.new(color.gray, 20))
 plot(rsi, "RSI", display=display.none)
 plot(vo, "VO", display=display.none)
+plot(scoreU, "BM Score Long",  display=display.none)
+plot(scoreD, "BM Score Short", display=display.none)
 
 // === BM сигналы отключены визуально (логика работает) ===
 // plotshape(longSignal, title="BM LONG", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.lime, text="BM↑")
@@ -264,5 +266,5 @@ alertcondition(shortSignal, "BM SHORT", "BM SHORT on {{ticker}} TF {{interval}}"
 // ============================================================================
 ceAwait = ceAwaitBarConfirmation ? barstate.isconfirmed : true
 alertcondition(dir != dir[1] and ceAwait, title = 'CE Direction Change', message = 'Chandelier Exit has changed direction, {{exchange}}:{{ticker}}')
-alertcondition(buySignal and ceAwait, title = 'CE Buy', message = '{"signalType":"CE_BUY","symbol":"{{ticker}}","tf":"{{interval}}","price":{{close}},"longStop":{{plot("Long Stop")}},"rsi":{{plot("RSI")}},"vo":{{plot("VO")}}}')
-alertcondition(sellSignal and ceAwait, title = 'CE Sell', message = '{"signalType":"CE_SELL","symbol":"{{ticker}}","tf":"{{interval}}","price":{{close}},"shortStop":{{plot("Short Stop")}},"rsi":{{plot("RSI")}},"vo":{{plot("VO")}}}')
+alertcondition(buySignal and ceAwait, title = 'CE Buy', message = '{"secret":"super_secret_webhook_password_123","signalType":"CE_BUY","symbol":"{{ticker}}","tf":"{{interval}}","price":{{close}},"longStop":{{plot_7}},"rsi":{{plot_3}},"vo":{{plot_4}},"bmScoreLong":{{plot_5}},"bmScoreShort":{{plot_6}}}')
+alertcondition(sellSignal and ceAwait, title = 'CE Sell', message = '{"secret":"super_secret_webhook_password_123","signalType":"CE_SELL","symbol":"{{ticker}}","tf":"{{interval}}","price":{{close}},"shortStop":{{plot_8}},"rsi":{{plot_3}},"vo":{{plot_4}},"bmScoreLong":{{plot_5}},"bmScoreShort":{{plot_6}}}')
