@@ -325,12 +325,17 @@
     // Render all three stat tiles for the currently selected period.
     function renderStats() {
         var s = _statsFor(_statsPeriod);
-        // Sum unrealized PnL from all open positions to reflect live exposure.
+        // Sum unrealized PnL from all open positions.
         var unrealPnl = (_lastPositions || []).reduce(function (sum, p) {
             var u = Number(p.unrealizedPnl);
             return sum + (Number.isFinite(u) ? u : 0);
         }, 0);
-        var pnl = Number(s.totalPnl || 0) + unrealPnl;
+        // "Всё время" = realized all-time + unrealized (true account performance).
+        // Windowed periods (today/7d/month) = realized only for that window —
+        // adding unrealized to all windows simultaneously creates the 7d > month
+        // paradox when early-month losses outweigh the last-7-day gains.
+        var realizedPnl = Number(s.totalPnl || 0);
+        var pnl = (_statsPeriod === 'all') ? realizedPnl + unrealPnl : realizedPnl;
 
         var tradesEl  = document.getElementById('stat-trades');
         var winEl     = document.getElementById('stat-winrate');
@@ -348,7 +353,7 @@
         }
         if (pnlLabel) pnlLabel.textContent = 'P&L ' + _periodLabel(_statsPeriod);
 
-        // Subtext: win/loss split and all-time comparison.
+        // Subtext: win/loss split and open-position annotation.
         if (tradesSub) {
             var wins = s.winTrades || 0, losses = s.lossTrades || 0;
             tradesSub.textContent = (wins || losses)
@@ -361,11 +366,17 @@
                 : '';
         }
         if (pnlSub) {
-            var all = _statsAllTime;
-            var allPnl = Number(all.totalPnl || 0) + unrealPnl;
-            pnlSub.textContent = (_statsPeriod !== 'all' && ((all.totalTrades || 0) > 0 || unrealPnl !== 0))
-                ? (_t('totalLabel') + (allPnl >= 0 ? '+' : '−') + '$' + Math.abs(allPnl).toFixed(2))
-                : '';
+            // For windowed periods: show "Открыто: +$X" if there are open positions.
+            // For all-time: no subtext needed (unrealized already included above).
+            if (_statsPeriod !== 'all' && unrealPnl !== 0) {
+                pnlSub.textContent = 'Открыто: ' + (unrealPnl >= 0 ? '+' : '−') + '$' + Math.abs(unrealPnl).toFixed(2);
+            } else {
+                var all = _statsAllTime;
+                var allPnl = Number(all.totalPnl || 0) + unrealPnl;
+                pnlSub.textContent = (_statsPeriod !== 'all' && (all.totalTrades || 0) > 0)
+                    ? (_t('totalLabel') + (allPnl >= 0 ? '+' : '−') + '$' + Math.abs(allPnl).toFixed(2))
+                    : '';
+            }
         }
 
         // Sync active button state.
