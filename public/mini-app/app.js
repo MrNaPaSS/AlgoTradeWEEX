@@ -325,15 +325,12 @@
     // Render all three stat tiles for the currently selected period.
     function renderStats() {
         var s = _statsFor(_statsPeriod);
-        // Diagnostic: confirm each period bucket actually has data.
-        try {
-            console.log('[stats] period=' + _statsPeriod,
-                'today=', _statsToday.totalTrades, '/', _statsToday.totalPnl,
-                '7d=',    _stats7d.totalTrades,    '/', _stats7d.totalPnl,
-                '30d=',   _stats30d.totalTrades,   '/', _stats30d.totalPnl,
-                'all=',   _statsAllTime.totalTrades,'/', _statsAllTime.totalPnl);
-        } catch (e) {}
-        var pnl = Number(s.totalPnl || 0);
+        // Sum unrealized PnL from all open positions to reflect live exposure.
+        var unrealPnl = (_lastPositions || []).reduce(function (sum, p) {
+            var u = Number(p.unrealizedPnl);
+            return sum + (Number.isFinite(u) ? u : 0);
+        }, 0);
+        var pnl = Number(s.totalPnl || 0) + unrealPnl;
 
         var tradesEl  = document.getElementById('stat-trades');
         var winEl     = document.getElementById('stat-winrate');
@@ -365,8 +362,8 @@
         }
         if (pnlSub) {
             var all = _statsAllTime;
-            var allPnl = Number(all.totalPnl || 0);
-            pnlSub.textContent = (_statsPeriod !== 'all' && (all.totalTrades || 0) > 0)
+            var allPnl = Number(all.totalPnl || 0) + unrealPnl;
+            pnlSub.textContent = (_statsPeriod !== 'all' && ((all.totalTrades || 0) > 0 || unrealPnl !== 0))
                 ? (_t('totalLabel') + (allPnl >= 0 ? '+' : '−') + '$' + Math.abs(allPnl).toFixed(2))
                 : '';
         }
