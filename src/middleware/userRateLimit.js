@@ -10,10 +10,10 @@ const rateLimit = require('express-rate-limit');
 const keyByUserId = (req) =>
     req.telegramUser?.id || req.ip;
 
-/** 30 requests/min for general API use */
+/** 60 requests/min for general API use */
 const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 30,
+    max: 60,
     keyGenerator: keyByUserId,
     standardHeaders: true,
     legacyHeaders: false,

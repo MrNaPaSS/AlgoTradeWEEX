@@ -574,13 +574,19 @@ class Database {
         const losses    = Number(rowC['losses']     || 0);
         const closedPnl = Number(rowC['closed_pnl'] || 0);
 
+        // decidedTrades = wins + losses only (excludes breakeven/BE trades).
+        // Winrate is calculated from decided trades so that positions closed at
+        // entry (SL moved to BE after TP1) don't dilute the denominator.
+        const decided = wins + losses;
+
         return {
-            totalTrades: total,
-            winTrades:   wins,
-            lossTrades:  losses,
-            totalPnl:    closedPnl + partialPnl,
-            winRate:     total > 0 ? Math.round((wins / total) * 100) : 0,
-            closedTrades: total
+            totalTrades:   total,
+            winTrades:     wins,
+            lossTrades:    losses,
+            decidedTrades: decided,
+            totalPnl:      closedPnl + partialPnl,
+            winRate:       decided > 0 ? Math.round((wins / decided) * 100) : 0,
+            closedTrades:  total
         };
     }
 

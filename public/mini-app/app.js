@@ -354,8 +354,9 @@
                 : '';
         }
         if (winSub) {
-            winSub.textContent = (s.totalTrades || 0) > 0
-                ? ((s.winTrades || 0) + _t('winOf') + s.totalTrades)
+            var decided = s.decidedTrades != null ? s.decidedTrades : (s.winTrades || 0) + (s.lossTrades || 0);
+            winSub.textContent = decided > 0
+                ? ((s.winTrades || 0) + _t('winOf') + decided)
                 : '';
         }
         if (pnlSub) {
@@ -702,8 +703,18 @@
         requestAnimationFrame(tick);
     }
 
-    // ── Dashboard refresh ─────────────────────────────────────────────────────
-    async function refresh() {
+    // ── Dashboard refresh (debounced — coalesces rapid calls into one) ───────
+    var _refreshPending = false;
+    var _refreshDebounceTimer = null;
+    function refresh() {
+        if (_refreshDebounceTimer) clearTimeout(_refreshDebounceTimer);
+        _refreshDebounceTimer = setTimeout(function () {
+            _refreshDebounceTimer = null;
+            _doRefresh();
+        }, 300);
+        return Promise.resolve();
+    }
+    async function _doRefresh() {
         var dot = document.getElementById('refresh-dot');
         if (dot) { dot.classList.add('active'); setTimeout(function () { dot.classList.remove('active'); }, 700); }
 
