@@ -892,7 +892,8 @@ input[type=range].range-slider::-moz-range-thumb {
     height: 3px;
     background: rgba(255,255,255,0.06);
     border-radius: 3px;
-    margin: 6px 0 14px; /* room beneath for tick labels */
+    /* right inset: gives the rightmost tick label room before card's overflow:hidden clip */
+    margin: 6px 22px 20px 0;
 }
 .pnl-bar-fill {
     height: 100%;
@@ -920,12 +921,6 @@ input[type=range].range-slider::-moz-range-thumb {
     letter-spacing: 0.3px;
     color: var(--text-3);
     white-space: nowrap;
-}
-/* Rightmost tick: right-align label so it doesn't overflow the card edge */
-.pnl-bar-tick--last::after {
-    left: auto;
-    right: 1px;
-    transform: none;
 }
 
 /* Position data grid — 2 rows × 4 columns, compact */
