@@ -925,7 +925,7 @@
                 var endLabel = (tpEnd === p.tp3Price && !tp3Hit) ? 'TP3'
                              : (tpEnd === p.tp2Price && !tp2Hit) ? 'TP2'
                              : 'TP1';
-                ticksHtml += '<span class="pnl-bar-tick" style="left:100%" data-label="' + endLabel + '"></span>';
+                ticksHtml += '<span class="pnl-bar-tick pnl-bar-tick--last" style="left:100%" data-label="' + endLabel + '"></span>';
             }
 
             // Persisted edits (so refresh doesn't blow away typed values)

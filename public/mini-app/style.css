@@ -756,13 +756,14 @@ input[type=range].range-slider::-moz-range-thumb {
     color: var(--text-3);
 }
 .stat-val {
-    font-size: 22px;
+    font-size: clamp(12px, 5.5vw, 22px);
     font-weight: 800;
     letter-spacing: -0.8px;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     display: flex;
     align-items: center;
+    white-space: nowrap;
 }
 
 /* ── List header ── */
@@ -919,6 +920,12 @@ input[type=range].range-slider::-moz-range-thumb {
     letter-spacing: 0.3px;
     color: var(--text-3);
     white-space: nowrap;
+}
+/* Rightmost tick: right-align label so it doesn't overflow the card edge */
+.pnl-bar-tick--last::after {
+    left: auto;
+    right: 1px;
+    transform: none;
 }
 
 /* Position data grid — 2 rows × 4 columns, compact */
