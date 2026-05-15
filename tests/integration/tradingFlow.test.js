@@ -12,7 +12,7 @@ describe('Integration: Trading Flow', () => {
         };
         mockData = {
             getCandles: jest.fn().mockReturnValue(
-                Array.from({ length: 50 }, (_, i) => ({ timestamp: Date.now() - (50 - i) * 60000, close: 30000 }))
+                Array.from({ length: 100 }, (_, i) => ({ timestamp: Date.now() - (100 - i) * 60000, open: 30000, high: 30100, low: 29900, close: 30000, volume: 100 }))
             )
         };
         mockEngine = {

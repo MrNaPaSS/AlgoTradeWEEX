@@ -742,7 +742,7 @@
             _stats30d     = data.stats30d     || { totalTrades: 0, winRate: 0, totalPnl: 0 };
             _statsAllTime = data.allTimeStats || { totalTrades: 0, winRate: 0, totalPnl: 0 };
             renderStats();
-            var pnl = Number((_statsPeriod === 'today' ? _statsToday : _statsAllTime).totalPnl || 0);
+            var pnl = Number(_statsFor(_statsPeriod).totalPnl || 0);
 
             // Sparkline — REAL equity curve from closed trades. Filter by the
             // currently-active period so "Сегодня" shows today's progression
@@ -1089,6 +1089,7 @@
     });
 
     function startRefresh() {
+        stopRefresh(); // clear any existing interval before creating a new one
         refresh();
         _timer = setInterval(refresh, 10000);
     }

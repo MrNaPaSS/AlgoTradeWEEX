@@ -491,7 +491,14 @@ class WeexFuturesClient {
                     triggerPriceType: 'MARK_PRICE',
                     clientAlgoId
                 });
-                result[`${key}OrderId`] = res?.orderId || res?.data?.orderId || clientAlgoId;
+                // placeTpSlOrder returns res?.data || res — WEEX plan-order endpoint
+                // responds with an ARRAY: [{ success:true, orderId:"123" }].
+                // res?.orderId and res?.data?.orderId are both undefined on an array,
+                // so parse it correctly before falling back to the client-side id.
+                const exchangeOrderId = Array.isArray(res)
+                    ? (res[0]?.orderId ? String(res[0].orderId) : null)
+                    : (res?.orderId ? String(res.orderId) : null);
+                result[`${key}OrderId`] = exchangeOrderId || clientAlgoId;
                 logger.info(`[WeexFutures] TP ladder ${key} placed as Plan Order`, { symbol, side, price, qty: qtyStr, orderId: result[`${key}OrderId`] });
             } catch (err) {
                 // Log but don't fail the whole ladder — remaining levels may still succeed.

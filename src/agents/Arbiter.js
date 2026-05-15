@@ -100,10 +100,12 @@ class Arbiter {
             
             const llmParsed = Array.isArray(llmResult) ? llmResult[0] : llmResult;
             if (llmParsed) {
-                outcome = llmParsed.outcome || outcome;
-                direction = llmParsed.direction || direction;
-                confidence = Number.isFinite(llmParsed.confidence) ? llmParsed.confidence : confidence;
-                reasoning = llmParsed.reasoning || reasoning;
+                const VALID_OUTCOMES   = new Set(['EXECUTE', 'HOLD', 'REJECT']);
+                const VALID_DIRECTIONS = new Set(['LONG', 'SHORT', 'NEUTRAL']);
+                if (VALID_OUTCOMES.has(llmParsed.outcome))     outcome    = llmParsed.outcome;
+                if (VALID_DIRECTIONS.has(llmParsed.direction)) direction  = llmParsed.direction;
+                if (Number.isFinite(llmParsed.confidence))     confidence = llmParsed.confidence;
+                if (llmParsed.reasoning)                       reasoning  = llmParsed.reasoning;
             } else {
                 logger.info('[Arbiter] LLM недоступен — используем результаты голосования');
             }

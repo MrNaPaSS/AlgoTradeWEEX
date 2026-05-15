@@ -68,7 +68,8 @@ const translations = {
             TP2_HIT: 'тейк-профит 2',
             TP3_HIT: 'тейк-профит 3',
             FORCE_CLOSE: 'принудительное закрытие',
-            shutdown_liquidate: 'остановка бота'
+            shutdown_liquidate: 'остановка бота',
+            external: 'закрыто на бирже (SL / ликвидация / вручную)'
         }
     },
 
@@ -141,7 +142,8 @@ const translations = {
             TP2_HIT: 'take profit 2',
             TP3_HIT: 'take profit 3',
             FORCE_CLOSE: 'force close',
-            shutdown_liquidate: 'bot shutdown'
+            shutdown_liquidate: 'bot shutdown',
+            external: 'closed on exchange (SL / liquidation / manual)'
         }
     }
 };

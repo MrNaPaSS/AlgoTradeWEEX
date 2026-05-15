@@ -59,7 +59,10 @@ function createWebhookRouter({ orchestrator, telegram, metrics } = {}) {
         }
 
         // --- HMAC + replay protection ---------------------------------------
-        if (hmacRequired || hmacConfigured) {
+        // Only enforce when explicitly required — having the secret configured
+        // but hmacRequired=false means the operator is staging for future use.
+        // Triggering on hmacConfigured alone would silently block all TV signals.
+        if (hmacRequired) {
             if (!hmacConfigured) {
                 return res.status(500).json({ success: false, error: 'webhook hmac secret not configured' });
             }
@@ -109,7 +112,7 @@ function createWebhookRouter({ orchestrator, telegram, metrics } = {}) {
                     telegram.notifySignalToForum(signal, decision)
                         .catch((e) => logger.warn('[webhook] forum notify failed', { message: e.message }));
                 }
-                telegram.notifyDecision({ ...decision, symbol: signal.symbol, tf: signal.tf })
+                telegram.notifyDecision({ ...decision, tf: signal.tf })
                     .catch((e) => logger.warn('[webhook] telegram notify failed', { message: e.message }));
             }
             const response = {

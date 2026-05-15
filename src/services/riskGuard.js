@@ -81,9 +81,13 @@ class RiskGuard {
     }
 
     pause(reason = 'manual') {
-        if (this._paused && this._pauseReason === reason) return;
+        const alreadyPaused = this._paused;
         this._paused = true;
         this._pauseReason = reason;
+        // If already paused (e.g. repeated daily-loss evaluate() calls with a
+        // slightly different formatted reason string), skip DB write and event —
+        // nothing meaningful changed. Only persist + emit on the first pause.
+        if (alreadyPaused) return;
         logger.warn('[RiskGuard] trading paused', { userId: this._userId, reason });
 
         this._enqueuePersist({ paused: true, reason });
@@ -140,20 +144,25 @@ class RiskGuard {
         await this._rolloverIfNewDay();
         const warnings = [];
 
+        // All allow:false returns include sizingMultiplier:1 for consistent shape.
+        // Callers use `?? 1` as a fallback but consistent shape prevents NaN
+        // in any new caller that destructures without a fallback.
+        const DENY = (reason) => ({ allow: false, reason, warnings, sizingMultiplier: 1 });
+
         if (this._paused) {
             const reason = `paused: ${this._pauseReason}`;
             if (this._metrics?.riskPausesTotal) {
                 this._metrics.riskPausesTotal.labels(this._pauseReason || 'unknown').inc();
             }
-            return { allow: false, reason, warnings };
+            return DENY(reason);
         }
         if (direction !== 'LONG' && direction !== 'SHORT') {
-            return { allow: false, reason: `invalid direction ${direction}`, warnings };
+            return DENY(`invalid direction ${direction}`);
         }
 
         const balance = await this._balanceFn();
         if (!Number.isFinite(balance) || balance <= 0) {
-            return { allow: false, reason: 'no available balance', warnings };
+            return DENY('no available balance');
         }
 
         const baseline = this._startOfDayBalance || balance;
@@ -161,7 +170,7 @@ class RiskGuard {
         if (dailyLossPct >= this._config.maxDailyLossPercent) {
             const reason = `daily loss limit hit: ${dailyLossPct.toFixed(2)}% ≥ ${this._config.maxDailyLossPercent}%`;
             this.pause(reason);
-            return { allow: false, reason, warnings };
+            return DENY(reason);
         }
         if (dailyLossPct > this._config.maxDailyLossPercent * 0.7) {
             warnings.push(`approaching daily loss cap (${dailyLossPct.toFixed(2)}%)`);
@@ -171,11 +180,7 @@ class RiskGuard {
         logger.debug('[RiskGuard] evaluating', { symbol, direction, openCount: positions.length });
 
         if (positions.length >= this._config.maxConcurrentPositions) {
-            return {
-                allow: false,
-                reason: `max concurrent positions reached (${positions.length}/${this._config.maxConcurrentPositions})`,
-                warnings
-            };
+            return DENY(`max concurrent positions reached (${positions.length}/${this._config.maxConcurrentPositions})`);
         }
 
         const sameSymbol = positions.find((p) => String(p.symbol).toUpperCase() === String(symbol).toUpperCase());
@@ -185,7 +190,7 @@ class RiskGuard {
 
             if (existingDir === intendedDir) {
                 logger.warn('[RiskGuard] duplication veto', { symbol, direction });
-                return { allow: false, reason: `already ${existingDir} on ${symbol}`, warnings };
+                return DENY(`already ${existingDir} on ${symbol}`);
             }
             warnings.push(`opposing ${existingDir} position on ${symbol} still open`);
         }
@@ -238,6 +243,19 @@ class RiskGuard {
     }
 
     snapshot() {
+        // If the calendar day has rolled over but evaluate() hasn't been called yet,
+        // return zeroed-out figures for today rather than the stale previous-day data.
+        const today = this._today();
+        if (today !== this._dayKey) {
+            return {
+                paused: this._paused,
+                pauseReason: this._pauseReason,
+                dayKey: today,
+                realisedPnlUsd: 0,
+                startOfDayBalance: this._startOfDayBalance,
+                dailyLossPercent: 0
+            };
+        }
         return {
             paused: this._paused,
             pauseReason: this._pauseReason,

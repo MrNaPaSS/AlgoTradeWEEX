@@ -147,11 +147,16 @@ async function bootstrap() {
             logger.info(`[PositionManager] ${event}`, payload);
             if (event === 'positionOpened' && payload?.position) {
                 promMetrics.ordersTotal.labels(payload.position.symbol, payload.position.side, payload.position.mode || 'unknown').inc();
-                telegram.notifyPositionOpened?.(payload.position).catch(() => {});
+                telegram.notifyPositionOpened?.(payload.position, config.telegram.chatId).catch(() => {});
             } else if (event === 'positionClosed' && payload?.position) {
-                telegram.notifyPositionClosed?.(payload.position, payload.reason, payload.pnl).catch(() => {});
+                // Pass full payload object + chatId — notifyPositionClosed(data, chatId)
+                // where data = { position, reason, pnl }.  Previously passed 3 separate args
+                // which put reason into chatId param and left position/pnl undefined.
+                telegram.notifyPositionClosed?.(payload, config.telegram.chatId).catch(() => {});
             } else if (event === 'partialClose' && payload?.position) {
-                telegram.notifyTakeProfitHit?.(payload.position, payload.level, payload.pnl).catch(() => {});
+                // Pass full payload object + chatId — notifyTakeProfitHit(data, chatId)
+                // where data = { position, level, pnl }. Passing 3 separate args was wrong.
+                telegram.notifyTakeProfitHit?.(payload, config.telegram.chatId).catch(() => {});
             } else if (event === 'openFailed') {
                 const reasonTag = /min(imum)?\s*notional/i.test(String(payload?.reason || '')) ? 'min_notional' : 'exchange_error';
                 promMetrics.ordersFailedTotal.labels(payload?.symbol || 'unknown', reasonTag).inc();
@@ -229,7 +234,7 @@ async function bootstrap() {
 
     weexWs.on('kline', ({ symbol, tf, candle }) => {
         // Feed real-time data into aggregator
-        dataAggregator.pushCandle(symbol, tf, candle);
+        dataAggregator.ingestCandle(symbol, tf, candle);
         // Feed into orchestrator for TP/SL tracking
         orchestrator.onCandleClosed({ symbol, candle });
     });

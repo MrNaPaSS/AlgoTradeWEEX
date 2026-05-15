@@ -4,7 +4,7 @@ const initSqlJs = require('sql.js');
 const logger = require('../utils/logger');
 
 const DB_PATH = path.join(__dirname, '..', '..', 'data', 'trades.db');
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 8;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -257,25 +257,8 @@ class Database {
             }
         }
 
-        // v8: language preference in access_requests
-        const arCols = new Set();
-        const arRes = this._db.exec('PRAGMA table_info(access_requests)');
-        if (arRes[0] && arRes[0].values) {
-            for (const row of arRes[0].values) arCols.add(row[1]);
-        }
-        if (!arCols.has('language')) {
-            try {
-                this._db.run("ALTER TABLE access_requests ADD COLUMN language TEXT DEFAULT 'en'");
-                this._markDirty();
-                logger.info('[Database] migration v8: added access_requests.language');
-            } catch (err) {
-                if (!/duplicate column/i.test(err.message)) {
-                    logger.error('[Database] migration v8 failed', { message: err.message });
-                }
-            }
-        }
-
         // v7: access_requests table for Telegram onboarding flow
+        // Must run before v8 which adds a column to this table.
         const accessTableExists = this._db.exec(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='access_requests'"
         );
@@ -298,6 +281,24 @@ class Database {
             } catch (err) {
                 if (!/already exists/i.test(err.message)) {
                     logger.error('[Database] migration v7 failed', { message: err.message });
+                }
+            }
+        }
+
+        // v8: language preference in access_requests (must run after v7)
+        const arCols = new Set();
+        const arRes = this._db.exec('PRAGMA table_info(access_requests)');
+        if (arRes[0] && arRes[0].values) {
+            for (const row of arRes[0].values) arCols.add(row[1]);
+        }
+        if (!arCols.has('language')) {
+            try {
+                this._db.run("ALTER TABLE access_requests ADD COLUMN language TEXT DEFAULT 'en'");
+                this._markDirty();
+                logger.info('[Database] migration v8: added access_requests.language');
+            } catch (err) {
+                if (!/duplicate column/i.test(err.message)) {
+                    logger.error('[Database] migration v8 failed', { message: err.message });
                 }
             }
         }
@@ -537,8 +538,11 @@ class Database {
         if (sinceTs !== null) { sqlClosed += ` AND closed_at >= ?`; pClosed.push(sinceTs); }
         if (uid)              { sqlClosed += ` AND user_id = ?`;     pClosed.push(uid); }
 
-        const stC  = this._db.prepare(sqlClosed);
-        const rowC = stC.getAsObject(pClosed.length ? pClosed : undefined);
+        // sql.js: getAsObject() ignores any argument — must bind() before step()
+        const stC = this._db.prepare(sqlClosed);
+        if (pClosed.length) stC.bind(pClosed);
+        stC.step();
+        const rowC = stC.getAsObject();
         stC.free();
 
         // ── 2. PnL from TP-fired events on still-PARTIAL positions ─────────
@@ -555,13 +559,15 @@ class Database {
             if (sinceTs !== null) { sqlPc += ` AND pc.closed_at >= ?`; pPc.push(sinceTs); }
             if (uid)              { sqlPc += ` AND p.user_id = ?`;     pPc.push(uid); }
 
-            const stPc  = this._db.prepare(sqlPc);
-            const rowPc = stPc.getAsObject(pPc.length ? pPc : undefined);
+            const stPc = this._db.prepare(sqlPc);
+            if (pPc.length) stPc.bind(pPc);
+            stPc.step();
+            const rowPc = stPc.getAsObject();
             stPc.free();
             partialPnl = Number(rowPc['pc_pnl'] || 0);
         } catch { /* non-fatal — stats degrade gracefully */ }
 
-        if (!rowC) return null;
+        if (!rowC || rowC['total'] == null) return null;
 
         const total     = Number(rowC['total']      || 0);
         const wins      = Number(rowC['wins']       || 0);
@@ -749,26 +755,27 @@ class Database {
     // ─── Access Requests ─────────────────────────────────────────────────────
 
     async getAccessRequest(userId) {
-        const res = this._db.exec(
+        // sql.js exec() ignores bound params — use this.get() which calls
+        // prepare().bind() internally and correctly filters by user_id.
+        return this.get(
             'SELECT request_id, user_id, chat_id, username, weex_uid, status, language, created_at, processed_at FROM access_requests WHERE user_id = ?',
             [String(userId)]
         );
-        if (!res[0]?.values?.length) return null;
-        const cols = res[0].columns;
-        return Object.fromEntries(cols.map((c, i) => [c, res[0].values[0][i]]));
     }
 
     async upsertAccessRequest({ requestId, userId, chatId, username, weexUid }) {
+        // language column is intentionally excluded from ON CONFLICT SET so the
+        // user's chosen language is preserved when they re-submit their UID.
         await this.run(
             `INSERT INTO access_requests (request_id, user_id, chat_id, username, weex_uid, status, created_at)
              VALUES (?, ?, ?, ?, ?, 'pending', ?)
              ON CONFLICT(user_id) DO UPDATE SET
-               request_id = excluded.request_id,
-               chat_id    = excluded.chat_id,
-               username   = excluded.username,
-               weex_uid   = excluded.weex_uid,
-               status     = 'pending',
-               created_at = excluded.created_at,
+               request_id   = excluded.request_id,
+               chat_id      = excluded.chat_id,
+               username     = excluded.username,
+               weex_uid     = excluded.weex_uid,
+               status       = 'pending',
+               created_at   = excluded.created_at,
                processed_at = NULL`,
             [requestId, String(userId), String(chatId), username ?? null, weexUid ?? null, Date.now()]
         );

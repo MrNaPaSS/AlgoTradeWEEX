@@ -151,8 +151,11 @@ class UserTradeEngine {
                 return { userId, success: false, reason: riskResult.reason };
             }
 
-            // Compute per-user sizing
-            const sizing = this._computeUserSizing(engine, snapshot, direction, riskResult);
+            // Compute per-user sizing.
+            // If the Arbiter flipped direction, the orchestrator attaches _correctedSizing
+            // to the snapshot to avoid using the old-direction SL/TP values.
+            const sizing = snapshot._correctedSizing
+                || this._computeUserSizing(engine, snapshot, direction, riskResult);
             if (!sizing) {
                 return { userId, success: false, reason: 'sizing_failed' };
             }
@@ -351,7 +354,7 @@ class UserTradeEngine {
     _computeUserSizing(engine, snapshot, direction, riskResult) {
         const atrValue = snapshot.indicators?.atr;
         const close = snapshot.indicators?.close;
-        if (!Number.isFinite(atrValue) || !Number.isFinite(close) || atrValue <= 0) return null;
+        if (!Number.isFinite(close) || close <= 0) return null;
 
         const riskConfig = this._buildRiskConfig({
             risk_position_size_pct: engine.riskGuard?._config?.maxPositionSizePercent ?? 5,
@@ -368,22 +371,39 @@ class UserTradeEngine {
         const notionalUsd = balance * (riskPct / 100) * sizingMultiplier;
         const quantity = (notionalUsd * leverage) / close;
 
-        const slDistance = atrValue * riskConfig.slAtrMult;
-        const tp1Distance = atrValue * riskConfig.tp1AtrMult;
-        const tp2Distance = atrValue * riskConfig.tp2AtrMult;
-        const tp3Distance = atrValue * riskConfig.tp3AtrMult;
-
         const sign = direction === 'LONG' ? 1 : -1;
+        const signal = snapshot.triggeringSignal;
+
+        // ── SL: use indicator-provided stop if present, else ATR-based ──
+        const signalStop = direction === 'LONG' ? signal?.longStop : signal?.shortStop;
+        let stopLoss;
+        if (Number.isFinite(signalStop) && signalStop > 0) {
+            stopLoss = signalStop;
+        } else {
+            if (!Number.isFinite(atrValue) || atrValue <= 0) return null;
+            stopLoss = close - sign * (atrValue * riskConfig.slAtrMult);
+        }
+
+        // ── TPs: each resolved independently (signal value if finite, else ATR) ──
+        const signalTp1 = signal?.tp1;
+        const signalTp2 = signal?.tp2;
+        const signalTp3 = signal?.tp3;
+        const needAtr = !Number.isFinite(signalTp1) || !Number.isFinite(signalTp2) || !Number.isFinite(signalTp3);
+        if (needAtr && (!Number.isFinite(atrValue) || atrValue <= 0)) return null;
+
+        const tp1 = Number.isFinite(signalTp1) ? signalTp1 : close + sign * (atrValue * riskConfig.tp1AtrMult);
+        const tp2 = Number.isFinite(signalTp2) ? signalTp2 : close + sign * (atrValue * riskConfig.tp2AtrMult);
+        const tp3 = Number.isFinite(signalTp3) ? signalTp3 : close + sign * (atrValue * riskConfig.tp3AtrMult);
 
         return {
             quantity,
             notionalUsd,
             leverage,
-            stopLoss: close - sign * slDistance,
+            stopLoss,
             takeProfits: [
-                { level: 1, price: close + sign * tp1Distance, closePercent: 50 },
-                { level: 2, price: close + sign * tp2Distance, closePercent: 30 },
-                { level: 3, price: close + sign * tp3Distance, closePercent: 20 }
+                { level: 1, price: tp1, closePercent: 50 },
+                { level: 2, price: tp2, closePercent: 30 },
+                { level: 3, price: tp3, closePercent: 20 }
             ]
         };
     }

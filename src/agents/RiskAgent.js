@@ -79,29 +79,46 @@ class RiskAgent extends BaseAgent {
         if (direction === 'NEUTRAL') return null;
         const atrValue = snapshot.indicators?.atr;
         const close = snapshot.indicators?.close;
-        if (!Number.isFinite(atrValue) || !Number.isFinite(close) || atrValue <= 0) return null;
+        if (!Number.isFinite(close) || close <= 0) return null;
 
         const balanceUsd = await this._balanceFn();
         if (!Number.isFinite(balanceUsd) || balanceUsd <= 0) return null;
 
-        // Dynamic sizing: balance × risk_per_trade_%
         const riskPct = this._config.maxPositionSizePercent || 5;
         const baseNotionalUsd = balanceUsd * (riskPct / 100);
-        
         const notionalUsd = baseNotionalUsd * sizingMultiplier;
         const leverage = this._config.defaultLeverage || 5;
-        const quantity = (notionalUsd * leverage) / close; // Total leveraged position size
+        const quantity = (notionalUsd * leverage) / close;
 
-        const slDistance = atrValue * this._config.slAtrMult;
-        const tp1Distance = atrValue * this._config.tp1AtrMult;
-        const tp2Distance = atrValue * this._config.tp2AtrMult;
-        const tp3Distance = atrValue * this._config.tp3AtrMult;
-
+        const signal = snapshot.triggeringSignal;
         const sign = direction === 'LONG' ? 1 : -1;
-        const stopLoss = close - sign * slDistance;
-        const tp1 = close + sign * tp1Distance;
-        const tp2 = close + sign * tp2Distance;
-        const tp3 = close + sign * tp3Distance;
+
+        // ── Use indicator-provided SL/TP if present, otherwise fall back to ATR ──
+        const signalStop = direction === 'LONG' ? signal?.longStop : signal?.shortStop;
+        const signalTp1  = signal?.tp1;
+        const signalTp2  = signal?.tp2;
+        const signalTp3  = signal?.tp3;
+
+        let stopLoss, tp1, tp2, tp3;
+
+        if (Number.isFinite(signalStop) && signalStop > 0) {
+            // SL from indicator
+            stopLoss = signalStop;
+        } else {
+            // SL from ATR
+            if (!Number.isFinite(atrValue) || atrValue <= 0) return null;
+            stopLoss = close - sign * (atrValue * this._config.slAtrMult);
+        }
+
+        // Each TP is resolved independently: use signal value if present,
+        // otherwise fall back to ATR-based calculation. This avoids requiring
+        // ALL THREE TPs from the indicator (e.g. new indicator only sends 2).
+        const needAtrForTp = !Number.isFinite(signalTp1) || !Number.isFinite(signalTp2) || !Number.isFinite(signalTp3);
+        if (needAtrForTp && (!Number.isFinite(atrValue) || atrValue <= 0)) return null;
+
+        tp1 = Number.isFinite(signalTp1) ? signalTp1 : close + sign * (atrValue * this._config.tp1AtrMult);
+        tp2 = Number.isFinite(signalTp2) ? signalTp2 : close + sign * (atrValue * this._config.tp2AtrMult);
+        tp3 = Number.isFinite(signalTp3) ? signalTp3 : close + sign * (atrValue * this._config.tp3AtrMult);
 
         return {
             quantity,

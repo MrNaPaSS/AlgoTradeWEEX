@@ -222,9 +222,14 @@ class PositionManager {
                     logger.info('[PositionManager] position closed externally, removing from local state', { symbol: pos.symbol, side: pos.side });
                     const arr = (this._positions.get(pos.symbol) || []).filter(p => p.positionId !== pos.positionId);
                     this._positions.set(pos.symbol, arr);
-                    
+
                     const updated = updatePosition(pos, { status: 'CLOSED', closedAt: Date.now(), remainingQuantity: 0 });
                     await this._db.updatePosition(updated);
+                    // Notify so Telegram/UI learns the position closed externally
+                    // (SL hit by exchange, liquidation, manual close in WEEX app).
+                    // pnl is null because we don't have the fill price from the exchange event.
+                    // reason is 'external' — we cannot know if it was SL, liquidation or manual.
+                    this._onEvent('positionClosed', { position: updated, reason: 'external', pnl: null });
                 }
             }
         } catch (err) {
@@ -313,10 +318,37 @@ class PositionManager {
                 if (stillOpen) return;
 
                 // Plan order left the open list — could be FILLED or CANCELLED.
+                // First check if the position still exists on the exchange.
+                // If not, the SL fired and closed it — sync and skip TP processing.
+                logger.info('[PositionManager] Algo order no longer in open list, checking exchange position', {
+                    symbol: position.symbol, orderId, level
+                });
+                try {
+                    const exchangePositions = await this._broker._client.getPositions(position.symbol);
+                    const posArr = Array.isArray(exchangePositions) ? exchangePositions : (exchangePositions?.data || []);
+                    const posSide = position.side === 'long' ? 'LONG' : 'SHORT';
+                    const stillOnExchange = posArr.some(p =>
+                        String(p.symbol || '').toUpperCase() === position.symbol.toUpperCase() &&
+                        String(p.side || p.positionSide || '').toUpperCase() === posSide &&
+                        Math.abs(Number(p.size || p.positionAmt || 0)) > 0
+                    );
+                    if (!stillOnExchange) {
+                        logger.info('[PositionManager] Position no longer on exchange — SL/force-close fired, syncing', {
+                            symbol: position.symbol, orderId, level
+                        });
+                        await this.syncWithExchange();
+                        return;
+                    }
+                } catch (checkErr) {
+                    logger.warn('[PositionManager] Could not verify exchange position, proceeding with trade lookup', {
+                        symbol: position.symbol, message: checkErr.message
+                    });
+                }
+
                 // getOrder won't resolve plan-only client ids on WEEX, so confirm
                 // via user-trades: a close-side fill on this positionSide whose
                 // qty roughly matches the ladder fraction is our TP fill.
-                logger.info('[PositionManager] Algo order no longer in open list, attempting fill confirmation via trades', {
+                logger.info('[PositionManager] Attempting fill confirmation via trades', {
                     symbol: position.symbol, orderId, level
                 });
 
@@ -753,14 +785,13 @@ class PositionManager {
 
             const roundedQty = roundQty(sizing.quantity);
 
-            // Pre-round risk params
-            if (sizing.stopLoss) sizing.stopLoss = roundPrice(sizing.stopLoss);
-            if (sizing.takeProfits) {
-                sizing.takeProfits = sizing.takeProfits.map(tp => ({
-                    ...tp,
-                    price: roundPrice(tp.price)
-                }));
-            }
+            // Pre-round risk params — work on local copies, never mutate the caller's object.
+            const roundedStopLoss = sizing.stopLoss ? roundPrice(sizing.stopLoss) : sizing.stopLoss;
+            const roundedTakeProfits = sizing.takeProfits
+                ? sizing.takeProfits.map(tp => ({ ...tp, price: roundPrice(tp.price) }))
+                : sizing.takeProfits;
+            // Rebuild a rounded sizing snapshot for use below (original object untouched).
+            const roundedSizing = { ...sizing, quantity: roundedQty, stopLoss: roundedStopLoss, takeProfits: roundedTakeProfits };
 
             let fill;
             try {
@@ -784,11 +815,10 @@ class PositionManager {
                     side,
                     quantity: roundedQty,
                     price: markPrice,
-                    leverage: sizing.leverage,
-                    stopLoss: sizing.stopLoss
+                    leverage: roundedSizing.leverage,
+                    stopLoss: roundedSizing.stopLoss
                     // tpPrice is REMOVED to allow partial ladder closes
                 });
-                sizing.quantity = roundedQty; // Update sizing with actual used quantity
             } catch (err) {
                 logger.error('[PositionManager] open failed', { symbol, message: err.message });
                 await this._db.insertRiskEvent({
@@ -798,35 +828,38 @@ class PositionManager {
                 return null;
             }
 
+            // Use roundedQty as the canonical quantity from here on.
+            const finalQty = roundedQty;
+
             // C8 Phase 1: exchangeSlActive=true when live broker accepted SL on entry.
-            const exchangeSlActive = this._broker.mode === 'live' && Number.isFinite(sizing.stopLoss);
-            
+            const exchangeSlActive = this._broker.mode === 'live' && Number.isFinite(roundedSizing.stopLoss);
+
             // C8 Phase 2: place TP ladder (reduce-only LIMITs) on exchange
             let tpOrderIds = { tp1OrderId: null, tp2OrderId: null, tp3OrderId: null };
             let exchangeTpActive = false;
-            
-            if (this._broker.mode === 'live' && typeof this._broker.placeTpLadder === 'function' && sizing.takeProfits?.length > 0) {
+
+            if (this._broker.mode === 'live' && typeof this._broker.placeTpLadder === 'function' && roundedSizing.takeProfits?.length > 0) {
                 const tp1Pct = (this._config.risk?.tp1ClosePercent || 50) / 100;
                 const tp2Pct = (this._config.risk?.tp2ClosePercent || 30) / 100;
 
-                // Compute absolute qty per TP so the sum is EXACTLY sizing.quantity.
+                // Compute absolute qty per TP so the sum is EXACTLY finalQty.
                 // Round tp1/tp2 normally; tp3 absorbs the remainder so rounding drift
                 // (common when percentages hit a qty step boundary) can't push the
                 // ladder over totalQty and overclose the position.
-                const tp1Price = sizing.takeProfits[0]?.price;
-                const tp2Price = sizing.takeProfits[1]?.price;
-                const tp3Price = sizing.takeProfits[2]?.price;
+                const tp1Price = roundedSizing.takeProfits[0]?.price;
+                const tp2Price = roundedSizing.takeProfits[1]?.price;
+                const tp3Price = roundedSizing.takeProfits[2]?.price;
 
-                const tp1Qty = tp1Price ? roundQty(sizing.quantity * tp1Pct) : 0;
-                const tp2Qty = tp2Price ? roundQty(sizing.quantity * tp2Pct) : 0;
+                const tp1Qty = tp1Price ? roundQty(finalQty * tp1Pct) : 0;
+                const tp2Qty = tp2Price ? roundQty(finalQty * tp2Pct) : 0;
                 // tp3 = remainder. If tp3Price absent, any leftover is forfeit
                 // (the local fallback in _evaluateExits will still close it).
-                const tp3Qty = tp3Price ? Math.max(0, roundQty(sizing.quantity - tp1Qty - tp2Qty)) : 0;
+                const tp3Qty = tp3Price ? Math.max(0, roundQty(finalQty - tp1Qty - tp2Qty)) : 0;
 
                 tpOrderIds = await this._broker.placeTpLadder({
                     symbol,
                     side,
-                    totalQty: sizing.quantity,
+                    totalQty: finalQty,
                     tp1Price, tp2Price, tp3Price,
                     tp1Qty, tp2Qty, tp3Qty
                 });
@@ -837,12 +870,12 @@ class PositionManager {
                 symbol,
                 side,
                 entryPrice: fill.price || markPrice,
-                totalQuantity: sizing.quantity,
-                leverage: sizing.leverage,
-                stopLoss: sizing.stopLoss,
-                tp1Price: sizing.takeProfits[0]?.price,
-                tp2Price: sizing.takeProfits[1]?.price,
-                tp3Price: sizing.takeProfits[2]?.price,
+                totalQuantity: finalQty,
+                leverage: roundedSizing.leverage,
+                stopLoss: roundedSizing.stopLoss,
+                tp1Price: roundedSizing.takeProfits?.[0]?.price,
+                tp2Price: roundedSizing.takeProfits?.[1]?.price,
+                tp3Price: roundedSizing.takeProfits?.[2]?.price,
                 entryOrderId: fill.orderId,
                 slOrderId: fill.slOrderId ?? null,
                 exchangeSlActive,

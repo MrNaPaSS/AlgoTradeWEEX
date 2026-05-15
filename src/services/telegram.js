@@ -50,6 +50,12 @@ class TelegramService {
         return 'NEUTRAL';
     }
 
+    /** Returns true only if the message sender is the configured admin. */
+    _isAdmin(msg) {
+        return String(msg?.from?.id) === String(config.telegram.chatId) ||
+               String(msg?.chat?.id) === String(config.telegram.chatId);
+    }
+
     _getLang(chatId) {
         if (!this._db) return 'en';
         try {
@@ -89,22 +95,32 @@ class TelegramService {
     }
 
     // ─── Command registration ──────────────────────────────────────────────
+    /** Wrap an admin-only handler: silently ignores messages from non-admins. */
+    _adminOnly(fn) {
+        return (msg, ...args) => {
+            if (!this._isAdmin(msg)) return;
+            return fn.call(this, msg, ...args);
+        };
+    }
+
     setupCommands() {
+        // /start and /help are open to all users (onboarding flow)
         this.bot.onText(/^\/start/, (msg) => this._cmdStart(msg));
         this.bot.onText(/^\/help/, (msg) => this._cmdHelp(msg));
-        this.bot.onText(/^\/status/, (msg) => this._cmdStatus(msg));
-        this.bot.onText(/^\/balance/, (msg) => this._cmdBalance(msg));
-        this.bot.onText(/^\/stats/, (msg) => this._cmdStats(msg));
-        this.bot.onText(/^\/pnl(?:\s+(today|week|month))?/, (msg, match) => this._cmdPnl(msg, match?.[1] || 'today'));
-        this.bot.onText(/^\/risk/, (msg) => this._cmdRisk(msg));
-        this.bot.onText(/^\/agents/, (msg) => this._cmdAgents(msg));
-        this.bot.onText(/^\/mode(?:\s+(fast|standard|full))?/i, (msg, match) => this._cmdMode(msg, match?.[1]));
-        this.bot.onText(/^\/paper/, (msg) => this._cmdMarkMode(msg, 'paper'));
-        this.bot.onText(/^\/live/, (msg) => this._cmdMarkMode(msg, 'live'));
-        this.bot.onText(/^\/pause(?:\s+(.+))?/, (msg, match) => this._cmdPause(msg, match?.[1] || 'manual'));
-        this.bot.onText(/^\/resume/, (msg) => this._cmdResume(msg));
-        this.bot.onText(/^\/symbols/, (msg) => this._cmdSymbols(msg));
-        this.bot.onText(/^\/close(?:\s+(\S+))?/, (msg, match) => this._cmdClose(msg, match?.[1]));
+        // All other commands are admin-only
+        this.bot.onText(/^\/status/, this._adminOnly((msg) => this._cmdStatus(msg)));
+        this.bot.onText(/^\/balance/, this._adminOnly((msg) => this._cmdBalance(msg)));
+        this.bot.onText(/^\/stats/, this._adminOnly((msg) => this._cmdStats(msg)));
+        this.bot.onText(/^\/pnl(?:\s+(today|week|month))?/, this._adminOnly((msg, match) => this._cmdPnl(msg, match?.[1] || 'today')));
+        this.bot.onText(/^\/risk/, this._adminOnly((msg) => this._cmdRisk(msg)));
+        this.bot.onText(/^\/agents/, this._adminOnly((msg) => this._cmdAgents(msg)));
+        this.bot.onText(/^\/mode(?:\s+(fast|standard|full))?/i, this._adminOnly((msg, match) => this._cmdMode(msg, match?.[1])));
+        this.bot.onText(/^\/paper/, this._adminOnly((msg) => this._cmdMarkMode(msg, 'paper')));
+        this.bot.onText(/^\/live/, this._adminOnly((msg) => this._cmdMarkMode(msg, 'live')));
+        this.bot.onText(/^\/pause(?:\s+(.+))?/, this._adminOnly((msg, match) => this._cmdPause(msg, match?.[1] || 'manual')));
+        this.bot.onText(/^\/resume/, this._adminOnly((msg) => this._cmdResume(msg)));
+        this.bot.onText(/^\/symbols/, this._adminOnly((msg) => this._cmdSymbols(msg)));
+        this.bot.onText(/^\/close(?:\s+(\S+))?/, this._adminOnly((msg, match) => this._cmdClose(msg, match?.[1])));
 
         this.bot.on('callback_query', (query) => this._handleCallbackQuery(query).catch((err) => {
             logger.error('[Telegram] callback_query error', { message: err.message });
@@ -428,7 +444,7 @@ class TelegramService {
             const cfg = config.risk || {};
             this.sendMessage(t('riskMsg', lang, {
                 status: snap.paused ? `⛔ PAUSED (${snap.pauseReason || '—'})` : '🟢 ACTIVE',
-                pnl:    this._fmtNum(snap.dailyPnl, 2),
+                pnl:    this._fmtNum(snap.realisedPnlUsd, 2),
                 loss:   this._fmtNum(cfg.maxDailyLossPercent, 1),
                 maxPos: cfg.maxOpenPositions ?? '—',
                 risk:   this._fmtNum(cfg.riskPerTradePercent, 1)
@@ -582,14 +598,17 @@ class TelegramService {
     async notifyPositionClosed(data, chatId) {
         const lang = this._getLang(chatId);
         const { position, reason, pnl } = data;
-        const sign = Number(pnl) >= 0 ? '+' : '';
-        const emoji = Number(pnl) >= 0 ? '🟢' : '🔴';
+        const pnlKnown = pnl !== null && pnl !== undefined && Number.isFinite(Number(pnl));
+        const pnlVal   = pnlKnown ? Number(pnl) : null;
+        const sign     = pnlKnown && pnlVal >= 0 ? '+' : '';
+        const emoji    = pnlKnown ? (pnlVal >= 0 ? '🟢' : '🔴') : '⬜';
+        const pnlStr   = pnlKnown ? `${sign}$${this._fmtNum(pnlVal, 2)}` : '—';
         const message = t('posClosed', lang, {
             emoji,
             symbol:   this._md(position.symbol),
             dir:      this._dirLabel(position.side),
             reason:   this._reasonLabel(reason, lang),
-            pnl:      `${sign}$${this._fmtNum(pnl, 2)}`,
+            pnl:      pnlStr,
             realized: this._fmtNum(position.realizedPnl, 2)
         });
         await this.sendMessage(message, chatId);

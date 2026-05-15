@@ -108,7 +108,7 @@ class PaperBroker {
     async getOrder() { return null; }
     async cancelOrderById() { return null; }
     async cancelAllForSymbol() { return { cancelled: [], skipped: [] }; }
-    async modifySlTp() { return null; }
+    async modifySlTp() { return { success: true, mode: 'paper' }; }
     async placeTpLadder() { return { tp1OrderId: null, tp2OrderId: null, tp3OrderId: null }; }
 
     _applySlippage(price, side, action) {

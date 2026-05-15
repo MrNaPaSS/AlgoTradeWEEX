@@ -44,6 +44,10 @@ class TradingOrchestrator {
         this._onEvent = onEvent || (() => {});
         this._config = config;
         this._userTradeEngine = userTradeEngine || null;
+        // Per-symbol in-flight guard: prevents two simultaneous signals for the
+        // same symbol from both passing the duplicate-position check and
+        // opening two positions before either one is persisted.
+        this._inFlight = new Set();
 
         // Периодическая синхронизация с биржей (раз в 30 секунд)
         // Пропускаем для master PM в мультиюзер-режиме — master работает только
@@ -106,6 +110,24 @@ class TradingOrchestrator {
             return null;
         }
 
+        // ── Per-symbol in-flight lock ────────────────────────────────────────
+        // Prevents two simultaneous signals for the same symbol from both
+        // passing the RiskGuard duplicate-position check before either position
+        // is persisted, which would open two trades on the same instrument.
+        if (this._inFlight.has(symbol)) {
+            logger.warn('[Orchestrator] signal dropped: concurrent in-flight for symbol', { symbol, signalId: signal.id });
+            return null;
+        }
+        this._inFlight.add(symbol);
+
+        try {
+        return await this._handleSignalInner(signal, symbol, tf);
+        } finally {
+            this._inFlight.delete(symbol);
+        }
+    }
+
+    async _handleSignalInner(signal, symbol, tf) {
         // ── 1. Проверка наличия данных ────────────────────────────────────────
         let candles = this._data.getCandles(symbol, tf);
         
@@ -128,8 +150,8 @@ class TradingOrchestrator {
             }
         }
 
-        if (!candles || candles.length < 1) {
-            logger.warn('[Orchestrator] still insufficient candles after fetch', { symbol, tf });
+        if (!candles || candles.length < 60) {
+            logger.warn('[Orchestrator] still insufficient candles after fetch', { symbol, tf, count: candles?.length ?? 0 });
             return null;
         }
 
@@ -213,7 +235,10 @@ class TradingOrchestrator {
             return decision;
         }
 
-        const markPrice = indicators.close ?? candles[candles.length - 1].close;
+        // Use enrichedIndicators.close (= signal.price from TradingView) as markPrice —
+        // indicators.close is the last closed Weex candle and can be up to 1h stale
+        // on hourly charts, causing SL/TP to be anchored to the wrong price.
+        const markPrice = enrichedIndicators.close ?? signal.price ?? candles[candles.length - 1].close;
 
         // C8 Bug Fix: If Arbiter flipped direction (e.g. Signal was LONG, but Arbiter decided SHORT),
         // the original 'sizing' from riskVote is invalid (SL/TP in wrong direction).
@@ -224,9 +249,13 @@ class TradingOrchestrator {
                 original: riskVote.direction,
                 final: decision.direction
             });
-            // We use the internal _computeSizing of riskAgent to get fresh params
+            // Re-run sizing for the flipped direction via the internal helper.
+            // Guard with typeof in case method is renamed in a future refactor.
             const multiplier = riskVote.metrics?.sizingMultiplier || 1;
-            const freshSizing = await this._riskAgent._computeSizing(snapshot, decision.direction, multiplier);
+            let freshSizing = null;
+            if (typeof this._riskAgent._computeSizing === 'function') {
+                freshSizing = await this._riskAgent._computeSizing(snapshot, decision.direction, multiplier);
+            }
             if (!freshSizing) {
                 logger.warn('[Orchestrator] failed to re-calculate sizing for flipped direction — aborting', { symbol });
                 return decision;
@@ -263,10 +292,17 @@ class TradingOrchestrator {
             });
         }
 
-        // 2. Fan-out to all connected mini-app users
+        // 2. Fan-out to all connected mini-app users.
+        // If the Arbiter flipped direction, `decision.risk.sizing` has the old-direction
+        // sizing. Patch the snapshot's triggeringSignal with finalSizing so that
+        // _computeUserSizing in userTradeEngine picks up the corrected direction.
+        // We don't mutate `snapshot` (frozen) — pass an enriched clone instead.
         let userResults = [];
         if (this._userTradeEngine) {
-            userResults = await this._userTradeEngine.fanOutDecision(decision, snapshot);
+            const fanOutSnapshot = finalSizing !== sizing
+                ? Object.freeze({ ...snapshot, _correctedSizing: finalSizing })
+                : snapshot;
+            userResults = await this._userTradeEngine.fanOutDecision(decision, fanOutSnapshot);
         }
 
         // Attach user results so the webhook router can see them. `decision` is
